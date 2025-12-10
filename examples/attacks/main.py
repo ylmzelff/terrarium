@@ -25,6 +25,7 @@ from src.utils import (
     create_environment,
     get_model_name,
     build_vllm_runtime,
+    handle_mcp_connection_error,
 )
 import asyncio
 from fastmcp import Client
@@ -183,6 +184,9 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         return True
 
     except Exception as e:
+        if handle_mcp_connection_error(e):
+            return False
+
         print(f"Simulation failed: {e}")
         import traceback
         traceback.print_exc()

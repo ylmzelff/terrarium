@@ -494,3 +494,15 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
         raise ValueError(f"Unknown provider: {provider}")
 
     return model_name
+
+
+def handle_mcp_connection_error(exc: Exception, url: str = "http://localhost:8000/mcp") -> bool:
+    message = str(exc)
+    connection_error = "Client failed to connect" in message or "All connection attempts failed" in message
+    if connection_error:
+        print(
+            f"Simulation aborted: could not connect to the MCP server at {url}.\n"
+            "Start it in another terminal with `python src/server.py` and retry."
+        )
+        return True
+    return False
