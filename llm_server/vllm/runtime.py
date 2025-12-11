@@ -548,8 +548,8 @@ class VLLMServerManager:
                 f"Expected: {spec.served_name()}\n"
                 f"Available: {available or 'unknown'}\n"
                 "Stop the running server or change llm.vllm.port/served_model_name to avoid conflicts."
-                "If you are only running one server, run 'pkill -f vllm.entrypoints.openai.api_server' to kill the running server."
-                "If you have more than one server"
+                "If you are only running one server, run 'pkill -f vllm.entrypoints.openai.api_server' to kill the running server, and rerun your script."
+                "If you have more than one server, try and find the running server that you want to kill with 'kill -9 <pid>'."
             )
 
         if not self.config.auto_start_server:

@@ -15,6 +15,7 @@ import random
 from typing import Any, Dict
 from tqdm import tqdm
 from datetime import datetime
+import traceback
 
 from src.agent import Agent
 from src.communication_protocol import CommunicationProtocol
@@ -158,7 +159,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             return False
 
         print(f"Simulation failed: {e}")
-        import traceback
         traceback.print_exc()
         return False
 
