@@ -17,7 +17,7 @@ environment:
   rng_seed: 42
 llm:
   # Provider: "openai", "anthropic", "gemini", or "vllm"
-  provider: "openai"
+  provider: "vllm"
   openai:
     model: "gpt-4.1-mini-2025-04-14"
   anthropic:
@@ -26,6 +26,7 @@ llm:
     model: "gemini-2.0-flash-lite"
   vllm:
     auto_start_server: true
+    persistent_server: false  # Keep the vLLM server alive between runs to avoid cold starts
     health_check_path: "/models"
     startup_timeout: 420 # When starting a new server, max time (s) to wait for it to be ready
     models:
