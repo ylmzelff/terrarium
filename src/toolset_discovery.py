@@ -2,15 +2,15 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 import time
 import uuid
-from envs.dcops.meeting_scheduling.tool_discovery import MeetingSchedulingEnvironmentTools
-from envs.dcops.personal_assistant.tool_discovery import PersonalAssistantEnvironmentTools
-from envs.dcops.smart_grid.tool_discovery import SmartGridEnvironmentTools
+from envs.dcops.meeting_scheduling.meeting_scheduling_tools import MeetingSchedulingTools
+from envs.dcops.personal_assistant.personal_assistant_tools import PersonalAssistantTools
+from envs.dcops.smart_grid.smartgrid_tools import SmartGridTools
 
 class ToolsetDiscovery:
     def __init__(self):
-        self.meeting_tools = MeetingSchedulingEnvironmentTools()
-        self.personal_assistant_tools = PersonalAssistantEnvironmentTools()
-        self.smartgrid_tools = SmartGridEnvironmentTools()
+        self.meeting_tools = MeetingSchedulingTools(blackboard_manager=None)
+        self.personal_assistant_tools = PersonalAssistantTools(blackboard_manager=None)
+        self.smartgrid_tools = SmartGridTools(blackboard_manager=None)
 
     def get_tools_for_environment(self, environment_name: str, phase: str) -> List[Dict[str, Any]]:
         """
@@ -32,7 +32,7 @@ class ToolsetDiscovery:
         else:
             return []
 
-    def get_supported_tools_for_environment(self, environment_name: str) -> Set[str]:
+    def get_env_tool_names(self, environment_name: str) -> Set[str]:
         """
         Get the set of tool names that this environment supports.
 
@@ -43,15 +43,15 @@ class ToolsetDiscovery:
         normalized = environment_name.lower().replace("_", "")
 
         if normalized == "meetingscheduling":
-            return self.meeting_tools.get_supported_tools()
+            return self.meeting_tools.get_tool_names()
         elif normalized == "personalassistant":
-            return self.personal_assistant_tools.get_supported_tools()
+            return self.personal_assistant_tools.get_tool_names()
         elif normalized == "smartgrid":
-            return self.smartgrid_tools.get_supported_tools()
+            return self.smartgrid_tools.get_tool_names()
         else:
             return set()
 
-    def get_supported_tools_for_blackboard(self) -> Set[str]:
+    def get_blackboard_tool_names(self) -> Set[str]:
         """
         Get the set of tool names that this blackboard manager supports.
 

@@ -10,7 +10,7 @@ class Agent:
     Agent-dependent methods for LLM agents.
     """
 
-    def __init__(self, client: AbstractClient, name, model_name: str = "", max_conversation_steps: int = 3,
+    def __init__(self, client: AbstractClient, name: str, model_name: str = "", max_conversation_steps: int = 3,
                  tool_logger: Optional[Any] = None, trajectory_logger: Optional[Any] = None, environment_name: str = ""):
         """
         Initialize an Agent.
@@ -38,6 +38,7 @@ class Agent:
         self.current_iteration = None
         self.current_round = None
         self.toolset_discovery = ToolsetDiscovery()
+        # TODO: This should not be here. It should be in a child class of this Agent class
         # Attack configurations for message replacement (set via set_attack_config)
         self.attack_configs = {
             "poisoning": {"agent": None, "config": {}},
@@ -48,7 +49,7 @@ class Agent:
         # An already instantiated client
         self.client = client
 
-    
+
     def set_meta_context(self, agent_name: str, phase: Optional[str] = None, iteration: Optional[int] = None, round_num: Optional[int] = None):
         """
         Set the current agent context for tool call logging.
@@ -64,6 +65,7 @@ class Agent:
         self.current_iteration = iteration
         self.current_round = round_num
 
+    # TODO: This should not be here. It should be in a child class of this Agent class
     def set_attack_config(self, attack_agent: str, config: dict):
         """
         Set attack agent configuration (supports poisoning and adversarial_agent attacks).
@@ -102,7 +104,6 @@ class Agent:
             # Ensure environment and blackboard_manager exist
             if not self.communication_protocol:
                 return {"error": "No communication protocol available"}
-
             # Ensure agent context is set
             if not self.current_agent_name:
                 return {"error": "Agent context not set - call set_agent_context first"}
@@ -112,23 +113,23 @@ class Agent:
                 tool.get("function", {}).get("name")
                 for tool in self.toolset_discovery.get_tools_for_environment(env_name_normalized, self.current_phase)
             }
-            supported_env_tools = self.toolset_discovery.get_supported_tools_for_environment(env_name_normalized)
+            env_tool_names = self.toolset_discovery.get_env_tool_names(env_name_normalized)
 
             # Check blackboard tools first
-            if tool_name in self.toolset_discovery.get_supported_tools_for_blackboard():
+            if tool_name in self.toolset_discovery.get_blackboard_tool_names():
                 result = await self.communication_protocol.blackboard_handle_tool_call(tool_name, self.current_agent_name, arguments,
                                                             phase=self.current_phase, iteration=self.current_iteration)
             # Then check environment tools (normalize environment name to lowercase)
             elif tool_name in available_env_tools:
                 result = await self.communication_protocol.environment_handle_tool_call(tool_name, self.current_agent_name, arguments,
                                                           phase=self.current_phase, iteration=self.current_iteration)
-            elif tool_name in supported_env_tools:
+            elif tool_name in env_tool_names:
                 result = {"error": f"Tool '{tool_name}' is not available during the {self.current_phase or 'current'} phase."}
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}
 
             # Log the tool call if logger is available
-            duration_ms = (time.time() - start_time) * 1000
+            duration_ms = (time.time() - start_time) * 1000 # s -> ms
             if self.tool_logger and self.current_agent_name:
                 self.tool_logger.log_tool_call(
                     agent_name=self.current_agent_name,

@@ -698,7 +698,7 @@ class TradingGameEnvironment(AbstractEnvironment):
 
         return base_tools
 
-    def get_supported_tools(self) -> Set[str]:
+    def get_tool_names(self) -> Set[str]:
         """Return set of tool names this environment supports."""
         return {"get_agent_info", "get_store_info", "buy_item", "propose_trade", "approve_trade", "reject_trade"}
 
@@ -718,7 +718,7 @@ class TradingGameEnvironment(AbstractEnvironment):
             Dictionary with tool execution result
         """
         # Check if tool is supported
-        if tool_name not in self.get_supported_tools():
+        if tool_name not in self.get_tool_names():
             return {"error": f"Tool '{tool_name}' not supported by TradingGameEnvironment"}
 
         # Tools that are actually actions and modify state
