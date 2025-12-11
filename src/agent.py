@@ -50,6 +50,34 @@ class Agent:
         self.client = client
 
 
+    def _log_tool_call(self, tool_name: str, arguments: Dict[str, Any], result: Dict[str, Any], start_time: float) -> None:
+        """Helper to log tool calls."""
+        if not (self.tool_logger and self.current_agent_name):
+            return
+        duration_ms = (time.time() - start_time) * 1000  # s -> ms
+        self.tool_logger.log_tool_call(
+            agent_name=self.current_agent_name,
+            phase=self.current_phase or "unknown",
+            tool_name=tool_name,
+            parameters=arguments,
+            result=result,
+            iteration=self.current_iteration,
+            round_num=self.current_round,
+            duration_ms=duration_ms
+        )
+
+    def _log_trajectory(self, trajectory_dict: Dict[str, Any]) -> None:
+        """Helper to log agent trajectories."""
+        if self.trajectory_logger and self.current_agent_name and trajectory_dict:
+            self.trajectory_logger.log_trajectory(
+                agent_name=self.current_agent_name,
+                iteration=self.current_iteration or 0,
+                phase=self.current_phase or "unknown",
+                trajectory_dict=trajectory_dict,
+                round_num=self.current_round
+            )
+
+
     def set_meta_context(self, agent_name: str, phase: Optional[str] = None, iteration: Optional[int] = None, round_num: Optional[int] = None):
         """
         Set the current agent context for tool call logging.
@@ -129,18 +157,7 @@ class Agent:
                 result = {"error": f"Unknown tool: {tool_name}"}
 
             # Log the tool call if logger is available
-            duration_ms = (time.time() - start_time) * 1000 # s -> ms
-            if self.tool_logger and self.current_agent_name:
-                self.tool_logger.log_tool_call(
-                    agent_name=self.current_agent_name,
-                    phase=self.current_phase or "unknown",
-                    tool_name=tool_name,
-                    parameters=arguments,
-                    result=result,
-                    iteration=self.current_iteration,
-                    round_num=self.current_round,
-                    duration_ms=duration_ms
-                )
+            self._log_tool_call(tool_name, arguments, result, start_time)
 
             return result
 
@@ -149,18 +166,7 @@ class Agent:
             error_result = {"error": error_msg}
 
             # Log the failed tool call if logger is available
-            duration_ms = (time.time() - start_time) * 1000
-            if self.tool_logger and self.current_agent_name:
-                self.tool_logger.log_tool_call(
-                    agent_name=self.current_agent_name,
-                    phase=self.current_phase or "unknown",
-                    tool_name=tool_name,
-                    parameters=arguments,
-                    result=error_result,
-                    iteration=self.current_iteration,
-                    round_num=self.current_round,
-                    duration_ms=duration_ms
-                )
+            self._log_tool_call(tool_name, arguments, error_result, start_time)
 
             print(f"ERROR: {error_msg}")
             return error_result
@@ -171,7 +177,7 @@ class Agent:
                                    max_tokens: int = 4000, temperature: float = 0.7,
                                    reasoning_effort: str = "low", verbosity: str = "low") -> Dict[str, Any]:
         """
-        Generate a response from OpenAI API with optional tool execution.
+        Generate a response multi-step tool execution.
 
         Supports two modes:
         1. With tools: Uses responses.create() API with multi-step tool execution
@@ -264,18 +270,10 @@ class Agent:
                         print(f"ERROR: Failed to continue conversation at step {step + 1}: {e}")
 
                         # Log trajectory even if conversation failed
-                        if self.trajectory_logger and self.current_agent_name and trajectory_dict:
-                            self.trajectory_logger.log_trajectory(
-                                agent_name=self.current_agent_name,
-                                iteration=self.current_iteration or 0,
-                                phase=self.current_phase or "unknown",
-                                trajectory_dict=trajectory_dict,
-                                round_num=self.current_round
-                            )
+                        self._log_trajectory(trajectory_dict)
 
                         return {
                             "response": f"Tool execution completed but failed to continue conversation at step {step + 1}: {e}",
-                            "thinking": "",
                             "full_content": response_str,
                             "usage": total_usage,
                             "model": self.model_name,
@@ -288,19 +286,11 @@ class Agent:
                         }
 
                 # Log trajectory if trajectory logger is available
-                if self.trajectory_logger and self.current_agent_name and trajectory_dict:
-                    self.trajectory_logger.log_trajectory(
-                        agent_name=self.current_agent_name,
-                        iteration=self.current_iteration or 0,
-                        phase=self.current_phase or "unknown",
-                        trajectory_dict=trajectory_dict,
-                        round_num=self.current_round
-                    )
+                self._log_trajectory(trajectory_dict)
 
                 # Return final response with accumulated stats
                 return {
                     "response": response_str,
-                    "thinking": "",
                     "full_content": response_str,
                     "usage": total_usage,
                     "model": getattr(current_response, 'model', None) or self.model_name,
@@ -312,15 +302,11 @@ class Agent:
                     "conversation_steps": step + 1 if total_tools_executed > 0 else 1
                 }
             else:
-                raise NotImplementedError("Agents SHOULD have access to tools for tool-based execution, otherwise they can't interact with agents ")
+                raise ValueError("[ERROR] tool_set is empty. Agents are required to have access to tools for tool-based execution.")
 
         except Exception as e:
-            print(f"Error generating agent response: {e}")
+            print(f"[ERROR] Issue generating agent response: {e}")
             raise
-
-    def stop_server(self):
-        """No-op for compatibility with other client interfaces."""
-        pass
     
     async def generate_agent_response(self, agent_name: str, agent_context: Dict[str, Any],
                               blackboard_context: Dict[str, str], prompts: Any = None, communication_protocol: Any = None,
@@ -352,22 +338,17 @@ class Agent:
                 iteration=iteration,
                 round_num=round_num
             )
-
             # Get prompts from environment if not directly provided
             system_prompt = prompts.get_system_prompt()
-            
             user_prompt = prompts.get_user_prompt(
                 agent_name=agent_name,
                 agent_context=agent_context,
                 blackboard_context=blackboard_context
             )
+            assert system_prompt is not None and user_prompt is not None, "System prompt and user prompt must be provided either directly or via environment"
+
             self.communication_protocol = communication_protocol
-            # Validate we have prompts
-            if system_prompt is None or user_prompt is None:
-                raise ValueError("System prompt and user prompt must be provided either directly or via environment")
-            #self.tools = tools
             self.prompts = prompts
-            # For OpenAI clients, pass MCP tools if available
             return await self.generate_response(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -375,6 +356,6 @@ class Agent:
                 verbosity="low"
             )
         except Exception as e:
-            print(f"      Error getting LLM response: {e}")
-            print(f"      Traceback: {traceback.format_exc()}")
+            print(f"[ERROR] Can't get LLM response: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
             return None
