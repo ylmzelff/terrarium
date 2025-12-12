@@ -73,34 +73,6 @@ class VLLMClient(AbstractClient):
         return ""
 
     @staticmethod
-    def _stringify_reasoning(reasoning_block: Any) -> str:
-        if isinstance(reasoning_block, str):
-            return reasoning_block
-        if isinstance(reasoning_block, dict):
-            return reasoning_block.get("text") or reasoning_block.get("content") or ""
-        if isinstance(reasoning_block, list):
-            parts: List[str] = []
-            for chunk in reasoning_block:
-                if isinstance(chunk, str):
-                    parts.append(chunk)
-                elif isinstance(chunk, dict):
-                    parts.append(chunk.get("text") or chunk.get("content") or "")
-            return "".join(parts)
-        return ""
-
-    def extract_reasoning_trace(self, response: Dict[str, Any]) -> str:
-        choices = response.get("choices") or []
-        if not choices:
-            return ""
-        message = choices[0].get("message") or {}
-        reasoning_payload = (
-            message.get("reasoning")
-            or message.get("reasoning_content")
-            or message.get("thoughts")
-        )
-        return self._stringify_reasoning(reasoning_payload)
-
-    @staticmethod
     def get_usage(response: Dict[str, Any], current_usage: Dict[str, int]) -> Dict[str, int]:
         usage = response.get("usage") or {}
         current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
