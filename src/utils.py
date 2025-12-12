@@ -496,6 +496,20 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
     return model_name
 
 
+def get_generation_params(llm_config: Dict[str, Any]) -> Dict[str, Any]:
+    provider = llm_config.get("provider", "").lower()
+    provider_block = llm_config.get(provider, {}) if provider else {}
+    if not isinstance(provider_block, dict):
+        return {}
+
+    raw_params = provider_block.get("params") or provider_block.get("generation") or {}
+    if not isinstance(raw_params, dict):
+        return {}
+
+    # Never leak model identifiers into request params
+    return {k: v for k, v in raw_params.items() if k != "model"}
+
+
 def handle_mcp_connection_error(exc: Exception, url: str = "http://localhost:8000/mcp") -> bool:
     message = str(exc)
     connection_error = "Client failed to connect" in message or "All connection attempts failed" in message
