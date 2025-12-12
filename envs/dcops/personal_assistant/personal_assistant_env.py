@@ -9,14 +9,13 @@ The PersonalAssistant environment involves agents coordinating to select outfits
 that satisfy personal preferences and inter-agent constraints (color matching).
 """
 from pathlib import Path
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
-# Import PersonalAssistant modules
-from envs.dcops.CoLLAB.PersonalAssistant.data_structure import (
-    Outfit, Factor
-)
-from envs.dcops.CoLLAB.PersonalAssistant.generate import build_personal_env
-from envs.dcops.CoLLAB.PersonalAssistant.prompt_maker import make_prompts_vanilla
+from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple
 
+# CoLLAB v2 problem-layer imports (made available via envs.dcops.__init__)
+from problem_layer.personal_assistant import PersonalAssistantConfig, generate_instance
+from problem_layer.personal_assistant.problem import Outfit
+from problem_layer.base import ProblemDefinition
+import logging
 # Import abstract environment interface and logger
 from envs.abstract_environment import AbstractEnvironment
 from envs.dcops.plotter import ScorePlotter
@@ -52,6 +51,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.current_seed = self.config.get("rng_seed", 42)
 
         # Instance management
+        # Partial joint assignment: variable_name -> chosen outfit number (1-based)
+        self.assignment: Dict[str, Any] = {}
         self.outfit_selections: Dict[str, Outfit] = {}
         self.tool_logger = tool_logger
         self.agent_names: List[str] = []  # Agent names (renamed from agents_list)
@@ -63,40 +64,49 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.max_iterations = self.simulation_config.get("max_iterations", None)
         self.max_planning_rounds = self.simulation_config.get("max_planning_rounds", None)
 
-        # Data paths to static CoLLAB data files
-        self.data_root = Path(__file__).parent.parent.parent.parent / "envs" / "dcops" / "CoLLAB" / "PersonalAssistant" / "data"
+        # Clear seed directories FIRST to ensure clean state for this run
+        clear_seed_directories("PersonalAssistant", self.current_seed, self.full_config)
 
-        # Generate PersonalAssistant instance
-        self.instance = build_personal_env(
-            n_agents=self.config.get("n_agents", 6),
-            max_degree=self.config.get("max_degree", 3),
-            data_root=self.data_root,
-            rng_seed=self.config.get("rng_seed", 42),
-            min_outfits_per_agent=self.config.get("min_outfits_per_agent", 5),
-            max_outfits_per_agent=self.config.get("max_outfits_per_agent", 8),
-            p_add_unary_color=self.config.get("p_add_unary_color", 0.7)
+        # ---- Build CoLLAB v2 instance -------------------------------------------------
+        num_agents = self.config.get("num_agents", self.config.get("n_agents", 3))
+        min_outfits = self.config.get("min_outfits_per_agent", 4)
+        max_outfits = self.config.get("max_outfits_per_agent", 6)
+        density = self.config.get("density")
+        if density is None:
+            # Back-compat: approximate density from max_degree if present
+            max_degree = self.config.get("max_degree", 3)
+            try:
+                density = float(max_degree) / max(1.0, float(num_agents) - 1.0)
+            except Exception:
+                density = 0.3
+        density = max(0.0, min(1.0, float(density)))
+
+        collab_cfg = PersonalAssistantConfig(
+            num_agents=int(num_agents),
+            density=float(density),
+            min_outfits_per_agent=int(min_outfits),
+            max_outfits_per_agent=int(max_outfits),
+            rng_seed=int(self.current_seed),
         )
+
+        dcops_root = Path(__file__).resolve().parents[1]
+        instance_dir = (
+            dcops_root
+            / "outputs"
+            / "collab_instances"
+            / "personal_assistant"
+            / f"seed_{self.current_seed}"
+        )
+        self.instance = generate_instance(collab_cfg, instance_dir)
+        self.problem: ProblemDefinition = self.instance.problem
 
         # Score tracking
         self.global_score_history: List[float] = []
         self.local_scores_history: Dict[str, List[float]] = {}
         self.score_plotter: Optional[ScorePlotter] = None
-        self.agent_names = self.instance.graph.agents.copy()
+        self.agent_names = list(self.problem.agents.keys())
         self.agents: List['Agent'] = [] # Set this later in main.py in case agents get different clients or settings
-
-        # Generate prompts using prompt_maker (this will be used by PersonalAssistantPrompts)
-        self.prompts_dict = make_prompts_vanilla(
-            self.instance.graph,
-            self.instance.wardrobe,
-            tone="standard"
-        )
-
-        # Calculate max possible score
-        self.max_possible_score = sum(len(factor.agent_scope) for factor in self.instance.graph.factors)
-
-        # Clear seed directories FIRST to ensure clean state for this run
-        # This must happen before creating loggers (PromptLogger in PersonalAssistantPrompts)
-        clear_seed_directories("PersonalAssistant", self.current_seed, self.full_config)
+        self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
 
         # Initialize prompts (Put this after all other instance variables)
         # Note: tools are now in MCP server, not in environment
@@ -115,34 +125,24 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         print("PersonalAssistantEnvironment initialized")
 
     async def async_init(self):
-        """Async initialization - create blackboards from factors."""
-        await self.create_blackboards_from_factors()
+        """Async initialization - create communication blackboards."""
+        await self.create_comm_network()
 
     def set_agent_clients(self, agents: List['Agent']):
         """Set the agents for the environment."""
         self.agents = agents
 
-    async def create_blackboards_from_factors(self):
-        """Convert PersonalAssistant factors to blackboard configuration. This happens only during initialization"""
+    async def create_comm_network(self):
+        """Create communication blackboards for multi‑agent coordination factors."""
+        for factor in self.problem.factors:
+            owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
+            if len(owners) < 2:
+                logging.warning(f"Skipping blackboard creation for meeting {meeting.meeting_id} with less than 2 participants")
+                continue
 
-        # Process factors with multiple agents (coordination factors)
-        for factor in self.instance.graph.factors:
-            if len(factor.agent_scope) >= 2:
-                context = self._factor_to_context(factor)
-
-                blackboard_id = await self.communication_protocol.generate_blackboard_network_from_factor(factor, context)
-                print(f"Created Personal Assistant Blackboard {blackboard_id}: {factor.agent_scope}")
-
-    def _factor_to_context(self, factor: Factor) -> str:
-        """Convert a factor to blackboard initial context string."""
-        if factor.ftype == "MATCH_COLOR":
-            agents_str = " and ".join(factor.agent_scope)
-            return f"Coordination required: {agents_str} should match colors"
-        elif factor.ftype == "NOT_MATCH_COLOR":
-            agents_str = " and ".join(factor.agent_scope)
-            return f"Coordination required: {agents_str} should NOT match colors"
-        else:
-            return f"Coordination between: {', '.join(factor.agent_scope)}"
+            context = factor.description or "Coordination required between agents."
+            blackboard_id = await self.communication_protocol.generate_comm_network(list(owners), context)
+            print(f"Created Personal Assistant Blackboard {blackboard_id}: {list(owners)}")
 
     # NOTE: Changed from get_agents
     def get_agent_names(self) -> List[str]:
@@ -168,9 +168,10 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         """
         # Clear outfit selections at the start of each new iteration's planning phase
         # to allow agents to make new choices
-        if phase == "planning" and iteration > 1 and self.outfit_selections:
-            print(f"PersonalAssistant: Clearing outfit selections for iteration {iteration}")
+        if phase == "planning" and iteration > 1 and (self.outfit_selections or self.assignment):
+            print(f"PersonalAssistant: Clearing selections for iteration {iteration}")
             self.outfit_selections = {}
+            self.assignment = {}
 
         if not self.instance:
             return {"error": "Environment not initialized"}
@@ -195,34 +196,56 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
         return context
 
-    def should_continue_simulation(self, iteration: int) -> bool:
-        """
-        Check if the simulation should continue running.
-
-        Args:
-            iteration: Current iteration number
-
-        Returns:
-            True if simulation should continue, False to stop
-        """
+    def done(self, iteration: int) -> bool:
+        """Return True when the environment is finished."""
         # Check max iterations first (consistent with trading environment)
         assert self.config is not None, "Config not available"
         max_iterations = self.config.get("max_iterations", 10)
         if iteration > max_iterations:
             print(f"Reached max iterations ({max_iterations}) - stopping simulation")
-            return False
+            return True
 
-        # Stop early if all agents have selected outfits AND all constraints are satisfied
-        if len(self.outfit_selections) == len(self.agent_names) and self.instance:
-            global_score = self.instance.graph.global_score(self.outfit_selections)
+        # Stop early if all variables assigned and max utility reached
+        total_vars = len(self.problem.variables)
+        if len(self.assignment) == total_vars and self.instance:
+            global_score, _ = self._compute_scores()
+            if self.max_possible_score and global_score >= self.max_possible_score:
+                print(
+                    f"All constraints satisfied (score: {global_score}/{self.max_possible_score}) - simulation complete"
+                )
+                return True
+            print(
+                f"All agents selected but constraints not fully satisfied (score: {global_score}/{self.max_possible_score}) - continuing"
+            )
 
-            if global_score == self.max_possible_score:
-                print(f"All constraints satisfied (score: {global_score}/{self.max_possible_score}) - simulation complete")
-                return False
-            else:
-                print(f"All agents selected but constraints not fully satisfied (score: {global_score}/{self.max_possible_score}) - continuing")
+        return False
 
-        return True
+    def _compute_scores(self) -> Tuple[float, Dict[str, float]]:
+        """
+        Compute partial global and local utility for current assignment.
+
+        Factors whose full scope has been assigned contribute to the total.
+        Local utilities are attributed evenly to variable owners in scope.
+        """
+        total_utility = 0.0
+        local_utilities: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
+
+        for factor in self.problem.factors:
+            if not all(var in self.assignment for var in factor.scope):
+                continue
+            try:
+                utility = factor.evaluate(self.assignment)
+            except Exception:
+                continue
+            total_utility += utility
+
+            owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
+            if owners:
+                share = utility / len(owners)
+                for owner in owners:
+                    local_utilities[owner] += share
+
+        return total_utility, local_utilities
 
     def log_state(self, iteration: int, phase: str) -> None:
         """
@@ -244,21 +267,9 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         if remaining:
             print(f"Remaining agents: {', '.join(remaining)}")
 
-        # Calculate and track scores always (consistent with other environments)
-        global_score = 0.0
-        local_scores = {}
-
-        if len(self.outfit_selections) == len(self.agent_names) and self.instance:
-            # All agents have selected - calculate actual scores
-            global_score = self.instance.graph.global_score(self.outfit_selections)
-            local_scores = self.instance.graph.all_local_scores(self.outfit_selections)
-            print(f"Final Global Score: {global_score}")
-            print("Local Scores:")
-            for agent, score in local_scores.items():
-                print(f"  {agent}: {score}")
-        else:
-            # Partial or no selections - use zero scores for all agents
-            local_scores = {agent: 0.0 for agent in self.agent_names}
+        global_score, local_scores = self._compute_scores()
+        ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
+        print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
 
         # Track scores and generate plots for every iteration
         self._track_scores(iteration, global_score, local_scores)
@@ -323,22 +334,19 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             Dictionary with serializable environment state
         """
         # Extract wardrobe options in serializable format
-        wardrobe_options = {}
-        if hasattr(self, 'instance') and self.instance and self.instance.wardrobe:
-            for agent_name, outfits in self.instance.wardrobe.options.items():
+        wardrobe_options: Dict[str, List[Dict[str, str]]] = {}
+        if self.instance and getattr(self.instance, "wardrobe", None):
+            for agent_name, outfits in self.instance.wardrobe.items():
                 wardrobe_options[agent_name] = [
                     {"article": outfit.article, "color": outfit.color}
                     for outfit in outfits
                 ]
 
         # Extract factors in serializable format
-        factors = []
-        if hasattr(self, 'instance') and self.instance and self.instance.graph:
-            for factor in self.instance.graph.factors:
-                factors.append({
-                    "ftype": factor.ftype,
-                    "scope": factor.agent_scope
-                })
+        factors: List[Dict[str, Any]] = []
+        for factor in self.problem.factors:
+            owners = sorted({self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables})
+            factors.append({"name": factor.name, "type": factor.factor_type, "owners": owners})
 
         return {
             "outfit_selections": {
@@ -348,7 +356,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             "agent_names": self.agent_names.copy(),
             "wardrobe_options": wardrobe_options,
             "factors": factors,
-            "max_possible_score": self.max_possible_score
+            "max_possible_score": self.max_possible_score,
+            "assignment": self.assignment.copy(),
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:
@@ -358,15 +367,28 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         Args:
             state_updates: Dictionary with state updates to apply
         """
-        # Apply outfit_selections updates (UPDATE, don't replace!)
         if "outfit_selections" in state_updates:
-            # Convert serialized format back to Outfit objects
-            from envs.dcops.CoLLAB.PersonalAssistant.data_structure import Outfit
             for agent, outfit_dict in state_updates["outfit_selections"].items():
-                self.outfit_selections[agent] = Outfit(
+                outfit = Outfit(
                     article=outfit_dict["article"],
-                    color=outfit_dict["color"]
+                    color=outfit_dict["color"],
+                    image=None,
                 )
+                self.outfit_selections[agent] = outfit
+
+                # Update assignment using wardrobe index (1-based)
+                options = self.instance.wardrobe.get(agent, []) if self.instance else []
+                choice_num = None
+                for idx, opt in enumerate(options, start=1):
+                    if opt.article == outfit.article and opt.color == outfit.color:
+                        choice_num = idx
+                        break
+                if choice_num is not None:
+                    try:
+                        var_name = self.problem.agent_variables(agent)[0].name
+                        self.assignment[var_name] = choice_num
+                    except Exception:
+                        pass
 
     def post_tool_execution_callback(self, state_updates: Dict[str, Any], response: Dict[str, Any]) -> None:
         """
@@ -379,16 +401,11 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             state_updates: Dictionary with state updates that were applied
             response: The response dictionary to potentially modify
         """
-        # Recalculate global_score after state updates if outfit selections were updated
         if "outfit_selections" in state_updates:
-            if hasattr(self, 'instance') and self.instance:
-                # Only calculate score if all agents have selected
-                if len(self.outfit_selections) == len(self.agent_names):
-                    global_score = self.instance.graph.global_score(self.outfit_selections)
-                    # Add global_score to result for agent feedback
-                    if "result" in response:
-                        response["result"]["global_score"] = global_score
-                        response["result"]["max_possible_score"] = self.max_possible_score
+            global_score, _ = self._compute_scores()
+            if "result" in response:
+                response["result"]["global_score"] = global_score
+                response["result"]["max_possible_score"] = self.max_possible_score
 
     def _generate_final_summary(self):
         """Generate final simulation summary."""
@@ -438,21 +455,22 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
-        if not self.instance or len(self.outfit_selections) != len(self.agent_names):
+        total_vars = len(self.problem.variables)
+        if not self.instance or len(self.assignment) != total_vars:
             return {
                 "status": "incomplete",
-                "selections_made": len(self.outfit_selections),
-                "total_agents": len(self.agent_names)
+                "variables_assigned": len(self.assignment),
+                "total_variables": total_vars,
+                "total_agents": len(self.agent_names),
             }
 
-        # Calculate final scores
-        global_score = self.instance.graph.global_score(self.outfit_selections)
-        local_scores = self.instance.graph.all_local_scores(self.outfit_selections)
+        global_score, local_scores = self._compute_scores()
 
         return {
             "status": "complete",
-            "global_score": global_score/self.max_possible_score if self.max_possible_score > 0 else 0.0,
-            "average_local_score": sum(local_scores.values()) / len(local_scores),
+            "global_score": global_score / self.max_possible_score if self.max_possible_score > 0 else 0.0,
+            "raw_global_score": global_score,
+            "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0.0,
             "local_scores": local_scores,
             "outfit_selections": {
                 agent: {"article": outfit.article, "color": outfit.color}

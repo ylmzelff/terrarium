@@ -7,12 +7,12 @@ simulation:
   note: ""
 environment:
   name: PersonalAssistant
-  n_agents: 6
-  max_degree: 3
+  # CoLLAB v2 PersonalAssistant (wardrobe coordination)
+  num_agents: 6
+  density: 0.3
   rng_seed: 42
   min_outfits_per_agent: 3
   max_outfits_per_agent: 4
-  p_add_unary_color: 0.7
 llm:
   # Provider: "openai", "anthropic", "gemini", or "vllm"
   provider: "openai"

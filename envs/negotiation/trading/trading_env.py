@@ -786,12 +786,11 @@ class TradingGameEnvironment(AbstractEnvironment):
         else:
             return self.execute_tool(tool_name, agent_name, arguments)
 
-    def should_continue_simulation(self, iteration: int) -> bool:
-        """Check if trading game should continue."""
-        # Continue if we haven't reached max iterations
+    def done(self, iteration: int) -> bool:
+        """Return True when the environment is finished."""
         assert self.config is not None, "Config not available"
         max_iterations = self.config.get("max_iterations", 3)
-        return iteration <= max_iterations
+        return iteration > max_iterations
 
     def log_state(self, iteration: int, phase: str) -> None:
         """Log trading game state."""
