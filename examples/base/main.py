@@ -2,6 +2,7 @@
 Main script to run a base/vanilla simulation
 """
 # Add project root to path so we can import modules
+import logging
 import sys
 from pathlib import Path
 
@@ -11,17 +12,15 @@ sys.path.insert(0, str(project_root))
 
 # Import our modules
 import argparse
-import random
 from typing import Any, Dict
 from tqdm import tqdm
 from datetime import datetime
 import traceback
 
-from src.agent import Agent
 from src.communication_protocol import CommunicationProtocol
+from src.agent_factory import build_agents
 from src.utils import (
     load_config,
-    get_client_instance,
     create_environment,
     get_model_name,
     build_vllm_runtime,
@@ -59,9 +58,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         if not run_timestamp:
             run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             config.setdefault("simulation", {})["run_timestamp"] = run_timestamp
-        print(f"\n{'='*60}")
-        print(f"SIMULATION - SEED: {seed}")
-        print(f"{'='*60}")
+        logging.info(f"SIMULATION - SEED: {seed}")
 
         # Initialize environment
         environment_name = config["environment"]["name"]
@@ -76,7 +73,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         # Initialize environment-specific tools on the MCP server
         async with mcp_client as client:
             result = await client.call_tool("initialize_environment_tools", {"environment_name": environment_name})
-            print(f"MCP server environment tools: {result.data}")
+            logging.info(f"MCP server environment tools: {result.data}")
 
         # Reset tool call log for new simulation
         environment.tool_logger.reset_log()
@@ -97,33 +94,25 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         else:
             model_name = get_model_name(provider, llm_config)
         log_suffix = f" (server logs: {log_path})" if log_path else ""
-        print(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
+        logging.info(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
         generation_params = get_generation_params(llm_config)
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
-        # Create agents with appropriate client for each
-        agents = []
-        for name in agent_names:
-            if provider == "vllm":
-                client, agent_model_name = vllm_runtime.create_client(name)
-            else:
-                client = get_client_instance(llm_config)
-                agent_model_name = model_name
-            print(f"Initializing Agent: {name} with {provider_label} - {agent_model_name}")
-            agent = Agent(
-                client,
-                name,
-                agent_model_name,
-                max_conversation_steps,
-                tool_logger,
-                trajectory_logger,
-                environment_name,  # Pass environment name so agent can discover correct tools
-                generation_params=generation_params
-            )
-            agents.append(agent)
-        # Shuffle initial agent order, and maintain order through simulation
-        random.shuffle(agents)
+        agents = build_agents(
+            agent_names,
+            provider=provider,
+            provider_label=provider_label,
+            llm_config=llm_config,
+            model_name=model_name,
+            max_conversation_steps=max_conversation_steps,
+            tool_logger=tool_logger,
+            trajectory_logger=trajectory_logger,
+            environment_name=environment_name,  # enables tool discovery
+            generation_params=generation_params,
+            vllm_runtime=vllm_runtime if provider == "vllm" else None,
+            log_fn=logging.info,
+        )
         environment.set_agent_clients(agents)
 
         max_iterations = config["simulation"].get("max_iterations", 1)
@@ -132,8 +121,8 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             # Main iteration
             for iteration in tqdm(range(1, max_iterations + 1), desc="Iterations", position=0, leave=True, ncols=80):
                 current_iteration = iteration
-                if not environment.should_continue_simulation(current_iteration):
-                    print(f"Environment requested simulation stop at iteration {current_iteration}")
+                if environment.done(current_iteration):
+                    logging.info(f"Environment requested simulation stop at iteration {current_iteration}")
                     break
                 # Planning Phase
                 for planning_round in tqdm(range(1, max_planning_rounds + 1), desc="  Planning", position=1, leave=False, ncols=80):

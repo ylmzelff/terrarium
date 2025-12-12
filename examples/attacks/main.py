@@ -11,18 +11,17 @@ sys.path.insert(0, str(project_root))
 
 # Import our modules
 import argparse
-import random
 from typing import Any, Dict
 from tqdm import tqdm
 from datetime import datetime
 import traceback
 
 from src.agent import Agent
+from src.agent_factory import build_agents
 from src.communication_protocol import CommunicationProtocol
 from src.logger import ToolCallLogger, AgentTrajectoryLogger
 from src.utils import (
     load_config,
-    get_client_instance,
     create_environment,
     get_model_name,
     build_vllm_runtime,
@@ -104,17 +103,9 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
-        # Create agents with appropriate client for each
-        agents = []
-        for idx, name in enumerate(agent_names):
-            if provider == "vllm":
-                client, agent_model_name = vllm_runtime.create_client(name)
-            else:
-                client = get_client_instance(llm_config)
-                agent_model_name = model_name
-            print(f"Initializing Agent: {name} with {provider_label} - {agent_model_name}")
+        def make_agent(client, name: str, agent_model_name: str):
             if args.attack_type == "agent_poisoning":
-                agent = AgentPoisoningAttack(
+                return AgentPoisoningAttack(
                     client,
                     name,
                     agent_model_name,
@@ -125,11 +116,11 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     args.poison_payload,
                     generation_params=generation_params,
                 )
-            elif args.attack_type == "context_overflow":
-                agent = ContextOverflowAttack(
+            if args.attack_type == "context_overflow":
+                return ContextOverflowAttack(
                     client,
                     name,
-                    model_name, 
+                    agent_model_name,
                     max_conversation_steps,
                     tool_logger,
                     trajectory_logger,
@@ -137,20 +128,32 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     args.poison_payload,
                     generation_params=generation_params,
                 )
-            else:
-                agent = Agent(
-                    client,
-                    name,
-                    agent_model_name, 
-                    max_conversation_steps,
-                    tool_logger,
-                    trajectory_logger,
-                    environment_name,
-                    generation_params=generation_params,
-                )
-            agents.append(agent)
-        # Shuffle initial agent order, and maintain order through simulation
-        random.shuffle(agents)
+            return Agent(
+                client,
+                name,
+                agent_model_name,
+                max_conversation_steps,
+                tool_logger,
+                trajectory_logger,
+                environment_name,
+                generation_params=generation_params,
+            )
+
+        agents = build_agents(
+            agent_names,
+            provider=provider,
+            provider_label=provider_label,
+            llm_config=llm_config,
+            model_name=model_name,
+            max_conversation_steps=max_conversation_steps,
+            tool_logger=tool_logger,
+            trajectory_logger=trajectory_logger,
+            environment_name=environment_name,
+            generation_params=generation_params,
+            vllm_runtime=vllm_runtime if provider == "vllm" else None,
+            make_agent=make_agent,
+            log_fn=print,
+        )
         environment.set_agent_clients(agents)
 
         if args.attack_type == "communication_protocol_poisoning":
@@ -162,7 +165,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             # Main iteration
             for iteration in tqdm(range(1, max_iterations + 1), desc="Iterations", position=0, leave=True, ncols=80):
                 current_iteration = iteration
-                if not environment.should_continue_simulation(current_iteration):
+                if environment.done(current_iteration):
                     print(f"Environment requested simulation stop at iteration {current_iteration}")
                     break
                     
