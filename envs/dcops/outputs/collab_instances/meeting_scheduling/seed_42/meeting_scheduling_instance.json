@@ -1,0 +1,718 @@
+{
+  "problem_name": "meeting_scheduling",
+  "instance_id": "meeting_scheduling_instance",
+  "instruction_mode": "text",
+  "metadata": {
+    "num_agents": 3,
+    "num_variables": 8,
+    "num_factors": 23,
+    "timeline_length": 12,
+    "max_utility": 11.0
+  },
+  "agent_variable_map": {
+    "Avery": [
+      "m001",
+      "m002",
+      "m003"
+    ],
+    "Jordan": [
+      "m002",
+      "m003"
+    ],
+    "Taylor": [
+      "m001",
+      "m002",
+      "m003"
+    ]
+  },
+  "agents": [
+    {
+      "id": "Avery",
+      "name": "Avery",
+      "instruction": "You are the personal scheduling assistant for this attendee.\nReview each meeting and choose whether to attend or skip.\nTimeline ticks are numbered slots; attendance intervals must lie within each meeting window.\n\nMeetings you are expected to consider:\n- Volleyball free play (group activity), window [0, 4), participants: Taylor, Jordan, Avery\n- One-on-one supervisor meeting (mandatory session), window [1, 2), participants: Avery, Taylor, Jordan\n- University class (mandatory session), window [4, 5), participants: Avery, Taylor\n\nSoft activities reward you for overlapping with peers; strict sessions require covering the full window.",
+      "variables": [
+        "m001",
+        "m002",
+        "m003"
+      ],
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "id": "Jordan",
+      "name": "Jordan",
+      "instruction": "You are the personal scheduling assistant for this attendee.\nReview each meeting and choose whether to attend or skip.\nTimeline ticks are numbered slots; attendance intervals must lie within each meeting window.\n\nMeetings you are expected to consider:\n- Volleyball free play (group activity), window [0, 4), participants: Taylor, Jordan, Avery\n- One-on-one supervisor meeting (mandatory session), window [1, 2), participants: Avery, Taylor, Jordan\n\nSoft activities reward you for overlapping with peers; strict sessions require covering the full window.",
+      "variables": [
+        "m002",
+        "m003"
+      ],
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "id": "Taylor",
+      "name": "Taylor",
+      "instruction": "You are the personal scheduling assistant for this attendee.\nReview each meeting and choose whether to attend or skip.\nTimeline ticks are numbered slots; attendance intervals must lie within each meeting window.\n\nMeetings you are expected to consider:\n- Volleyball free play (group activity), window [0, 4), participants: Taylor, Jordan, Avery\n- One-on-one supervisor meeting (mandatory session), window [1, 2), participants: Avery, Taylor, Jordan\n- University class (mandatory session), window [4, 5), participants: Avery, Taylor\n\nSoft activities reward you for overlapping with peers; strict sessions require covering the full window.",
+      "variables": [
+        "m001",
+        "m002",
+        "m003"
+      ],
+      "assets": {
+        "image": null
+      }
+    }
+  ],
+  "variables": [
+    {
+      "name": "Avery__m001",
+      "owner": "Avery",
+      "domain": [
+        "skip",
+        "4-5"
+      ],
+      "description": "Attendance choice for m001"
+    },
+    {
+      "name": "Taylor__m001",
+      "owner": "Taylor",
+      "domain": [
+        "skip",
+        "4-5"
+      ],
+      "description": "Attendance choice for m001"
+    },
+    {
+      "name": "Avery__m002",
+      "owner": "Avery",
+      "domain": [
+        "skip",
+        "1-2"
+      ],
+      "description": "Attendance choice for m002"
+    },
+    {
+      "name": "Taylor__m002",
+      "owner": "Taylor",
+      "domain": [
+        "skip",
+        "1-2"
+      ],
+      "description": "Attendance choice for m002"
+    },
+    {
+      "name": "Jordan__m002",
+      "owner": "Jordan",
+      "domain": [
+        "skip",
+        "1-2"
+      ],
+      "description": "Attendance choice for m002"
+    },
+    {
+      "name": "Taylor__m003",
+      "owner": "Taylor",
+      "domain": [
+        "skip",
+        "0-1",
+        "0-2",
+        "0-3",
+        "0-4",
+        "1-2",
+        "1-3",
+        "1-4",
+        "2-3",
+        "2-4",
+        "3-4"
+      ],
+      "description": "Attendance choice for m003"
+    },
+    {
+      "name": "Jordan__m003",
+      "owner": "Jordan",
+      "domain": [
+        "skip",
+        "0-1",
+        "0-2",
+        "0-3",
+        "0-4",
+        "1-2",
+        "1-3",
+        "1-4",
+        "2-3",
+        "2-4",
+        "3-4"
+      ],
+      "description": "Attendance choice for m003"
+    },
+    {
+      "name": "Avery__m003",
+      "owner": "Avery",
+      "domain": [
+        "skip",
+        "0-1",
+        "0-2",
+        "0-3",
+        "0-4",
+        "1-2",
+        "1-3",
+        "1-4",
+        "2-3",
+        "2-4",
+        "3-4"
+      ],
+      "description": "Attendance choice for m003"
+    }
+  ],
+  "factors": [
+    {
+      "name": "presence_m001_Avery",
+      "scope": [
+        "Avery__m001"
+      ],
+      "description": "Neutral presence tracker for Avery at University class",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m001_Avery",
+      "scope": [
+        "Avery__m001"
+      ],
+      "description": "Full attendance reward for Avery at University class",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m001_Taylor",
+      "scope": [
+        "Taylor__m001"
+      ],
+      "description": "Neutral presence tracker for Taylor at University class",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m001_Taylor",
+      "scope": [
+        "Taylor__m001"
+      ],
+      "description": "Full attendance reward for Taylor at University class",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m002_Avery",
+      "scope": [
+        "Avery__m002"
+      ],
+      "description": "Neutral presence tracker for Avery at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m002_Avery",
+      "scope": [
+        "Avery__m002"
+      ],
+      "description": "Full attendance reward for Avery at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m002_Taylor",
+      "scope": [
+        "Taylor__m002"
+      ],
+      "description": "Neutral presence tracker for Taylor at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m002_Taylor",
+      "scope": [
+        "Taylor__m002"
+      ],
+      "description": "Full attendance reward for Taylor at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m002_Jordan",
+      "scope": [
+        "Jordan__m002"
+      ],
+      "description": "Neutral presence tracker for Jordan at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m002_Jordan",
+      "scope": [
+        "Jordan__m002"
+      ],
+      "description": "Full attendance reward for Jordan at One-on-one supervisor meeting",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m003_Taylor",
+      "scope": [
+        "Taylor__m003"
+      ],
+      "description": "Neutral presence tracker for Taylor at Volleyball free play",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m003_Taylor",
+      "scope": [
+        "Taylor__m003",
+        "Jordan__m003",
+        "Avery__m003"
+      ],
+      "description": "Utility for Taylor at Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m003_Jordan",
+      "scope": [
+        "Jordan__m003"
+      ],
+      "description": "Neutral presence tracker for Jordan at Volleyball free play",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m003_Jordan",
+      "scope": [
+        "Taylor__m003",
+        "Jordan__m003",
+        "Avery__m003"
+      ],
+      "description": "Utility for Jordan at Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "presence_m003_Avery",
+      "scope": [
+        "Avery__m003"
+      ],
+      "description": "Neutral presence tracker for Avery at Volleyball free play",
+      "type": "personal_preference",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "utility_m003_Avery",
+      "scope": [
+        "Taylor__m003",
+        "Jordan__m003",
+        "Avery__m003"
+      ],
+      "description": "Utility for Avery at Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m001_m002_Avery",
+      "scope": [
+        "Avery__m001",
+        "Avery__m002"
+      ],
+      "description": "Penalty for Avery attending overlapping portions of University class and One-on-one supervisor meeting",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m001_m003_Avery",
+      "scope": [
+        "Avery__m001",
+        "Avery__m003"
+      ],
+      "description": "Penalty for Avery attending overlapping portions of University class and Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m002_m003_Avery",
+      "scope": [
+        "Avery__m002",
+        "Avery__m003"
+      ],
+      "description": "Penalty for Avery attending overlapping portions of One-on-one supervisor meeting and Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m002_m003_Jordan",
+      "scope": [
+        "Jordan__m002",
+        "Jordan__m003"
+      ],
+      "description": "Penalty for Jordan attending overlapping portions of One-on-one supervisor meeting and Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m001_m002_Taylor",
+      "scope": [
+        "Taylor__m001",
+        "Taylor__m002"
+      ],
+      "description": "Penalty for Taylor attending overlapping portions of University class and One-on-one supervisor meeting",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m001_m003_Taylor",
+      "scope": [
+        "Taylor__m001",
+        "Taylor__m003"
+      ],
+      "description": "Penalty for Taylor attending overlapping portions of University class and Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    },
+    {
+      "name": "overlap_penalty_m002_m003_Taylor",
+      "scope": [
+        "Taylor__m002",
+        "Taylor__m003"
+      ],
+      "description": "Penalty for Taylor attending overlapping portions of One-on-one supervisor meeting and Volleyball free play",
+      "type": "coordination",
+      "assets": {
+        "image": null
+      }
+    }
+  ],
+  "meetings": [
+    {
+      "id": "m001",
+      "title": "University class",
+      "type": "strict",
+      "window": [
+        4,
+        5
+      ],
+      "participants": [
+        "Avery",
+        "Taylor"
+      ]
+    },
+    {
+      "id": "m002",
+      "title": "One-on-one supervisor meeting",
+      "type": "strict",
+      "window": [
+        1,
+        2
+      ],
+      "participants": [
+        "Avery",
+        "Taylor",
+        "Jordan"
+      ]
+    },
+    {
+      "id": "m003",
+      "title": "Volleyball free play",
+      "type": "soft",
+      "window": [
+        0,
+        4
+      ],
+      "participants": [
+        "Taylor",
+        "Jordan",
+        "Avery"
+      ]
+    }
+  ],
+  "schemas": {
+    "joint_assignment": {
+      "title": "meeting_scheduling::joint_assignment",
+      "type": "object",
+      "properties": {
+        "Avery__m001": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "4-5"
+          ],
+          "description": "Attendance choice for m001"
+        },
+        "Taylor__m001": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "4-5"
+          ],
+          "description": "Attendance choice for m001"
+        },
+        "Avery__m002": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "1-2"
+          ],
+          "description": "Attendance choice for m002"
+        },
+        "Taylor__m002": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "1-2"
+          ],
+          "description": "Attendance choice for m002"
+        },
+        "Jordan__m002": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "1-2"
+          ],
+          "description": "Attendance choice for m002"
+        },
+        "Taylor__m003": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "0-1",
+            "0-2",
+            "0-3",
+            "0-4",
+            "1-2",
+            "1-3",
+            "1-4",
+            "2-3",
+            "2-4",
+            "3-4"
+          ],
+          "description": "Attendance choice for m003"
+        },
+        "Jordan__m003": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "0-1",
+            "0-2",
+            "0-3",
+            "0-4",
+            "1-2",
+            "1-3",
+            "1-4",
+            "2-3",
+            "2-4",
+            "3-4"
+          ],
+          "description": "Attendance choice for m003"
+        },
+        "Avery__m003": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "0-1",
+            "0-2",
+            "0-3",
+            "0-4",
+            "1-2",
+            "1-3",
+            "1-4",
+            "2-3",
+            "2-4",
+            "3-4"
+          ],
+          "description": "Attendance choice for m003"
+        }
+      },
+      "required": [
+        "Avery__m001",
+        "Taylor__m001",
+        "Avery__m002",
+        "Taylor__m002",
+        "Jordan__m002",
+        "Taylor__m003",
+        "Jordan__m003",
+        "Avery__m003"
+      ],
+      "additionalProperties": false
+    },
+    "agents": {
+      "Avery": {
+        "title": "meeting_scheduling::agent::Avery",
+        "type": "object",
+        "properties": {
+          "Avery__m001": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "4-5"
+            ],
+            "description": "Attendance choice for m001"
+          },
+          "Avery__m002": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "1-2"
+            ],
+            "description": "Attendance choice for m002"
+          },
+          "Avery__m003": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "0-1",
+              "0-2",
+              "0-3",
+              "0-4",
+              "1-2",
+              "1-3",
+              "1-4",
+              "2-3",
+              "2-4",
+              "3-4"
+            ],
+            "description": "Attendance choice for m003"
+          }
+        },
+        "required": [
+          "Avery__m001",
+          "Avery__m002",
+          "Avery__m003"
+        ],
+        "additionalProperties": false
+      },
+      "Jordan": {
+        "title": "meeting_scheduling::agent::Jordan",
+        "type": "object",
+        "properties": {
+          "Jordan__m002": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "1-2"
+            ],
+            "description": "Attendance choice for m002"
+          },
+          "Jordan__m003": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "0-1",
+              "0-2",
+              "0-3",
+              "0-4",
+              "1-2",
+              "1-3",
+              "1-4",
+              "2-3",
+              "2-4",
+              "3-4"
+            ],
+            "description": "Attendance choice for m003"
+          }
+        },
+        "required": [
+          "Jordan__m002",
+          "Jordan__m003"
+        ],
+        "additionalProperties": false
+      },
+      "Taylor": {
+        "title": "meeting_scheduling::agent::Taylor",
+        "type": "object",
+        "properties": {
+          "Taylor__m001": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "4-5"
+            ],
+            "description": "Attendance choice for m001"
+          },
+          "Taylor__m002": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "1-2"
+            ],
+            "description": "Attendance choice for m002"
+          },
+          "Taylor__m003": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "0-1",
+              "0-2",
+              "0-3",
+              "0-4",
+              "1-2",
+              "1-3",
+              "1-4",
+              "2-3",
+              "2-4",
+              "3-4"
+            ],
+            "description": "Attendance choice for m003"
+          }
+        },
+        "required": [
+          "Taylor__m001",
+          "Taylor__m002",
+          "Taylor__m003"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
