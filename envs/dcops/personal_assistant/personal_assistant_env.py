@@ -398,7 +398,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
                 response["result"]["joint_reward"] = joint_reward
                 response["result"]["max_possible_score"] = self.max_possible_score
 
-    def _generate_final_summary(self):
+    def generate_final_summary(self):
         """Generate final simulation summary."""
         print("\n" + "=" * 60)
         print("SIMULATION COMPLETE - FINAL SUMMARY")
@@ -423,21 +423,17 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         print(f"\n--- ITERATION {iteration} SUMMARY ---")
         self.log_iteration(iteration)
 
-    def cleanup(self) -> None:
-        """Clean up any resources used by the environment."""
-        print("PersonalAssistant environment cleanup")
-        if self.outfit_selections:
-            print(f"Final selections: {len(self.outfit_selections)}/{len(self.agent_names)} agents")
-
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
         total_vars = len(self.problem.variables)
+        final_selections = f"{len(self.outfit_selections)}/{len(self.agent_names)} agents"
         if not self.instance or len(self.assignment) != total_vars:
             return {
                 "status": "incomplete",
                 "variables_assigned": len(self.assignment),
                 "total_variables": total_vars,
                 "total_agents": len(self.agent_names),
+                "final_selections": final_selections,
             }
 
         joint_reward, agent_rewards = self.rewards(self.assignment)
@@ -451,5 +447,9 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             "outfit_selections": {
                 agent: {"article": outfit.article, "color": outfit.color}
                 for agent, outfit in self.outfit_selections.items()
-            }
+            },
+            "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
+            "total_agents": len(self.agent_names),
+            "final_selections": final_selections,
         }

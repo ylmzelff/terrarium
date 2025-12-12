@@ -96,22 +96,6 @@ class AbstractEnvironment(ABC):
         """
         pass
 
-    @abstractmethod
-    def cleanup(self, iteration: int) -> None:
-        """
-        Clean up any resources used by the environment.
-
-        Args:
-            iteration: Current iteration number (for final logging)
-
-        This is called when the simulation ends and should handle:
-        - Closing files or connections
-        - Saving final state
-        - Releasing any held resources
-        """
-        pass
-
-
     # Optional methods with default implementations
 
     def handle_pending_response(self, response_type: str, target_agent: str,

@@ -132,7 +132,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             blackboard_id = await self.communication_protocol.generate_comm_network(participants, context)
             print(f"Created Meeting Blackboard {blackboard_id}: {participants} for {meeting.meeting_id}")
 
-    def _generate_final_summary(self):
+    def generate_final_summary(self):
         """Generate final simulation summary."""
         print("\n" + "=" * 60)
         print("SIMULATION COMPLETE - FINAL SUMMARY")
@@ -374,22 +374,17 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             if "result" in response:
                 response["result"]["joint_reward"] = joint_reward
 
-    def cleanup(self) -> None:
-        """Clean up any resources used by the environment."""
-        print("MeetingScheduling environment cleanup")
-        total_vars = len(self.problem.variables)
-        if self.assignment:
-            print(f"Final attendance decisions: {len(self.assignment)}/{total_vars} variables")
-
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
         total_vars = len(self.problem.variables)
+        final_attendance_decisions = f"{len(self.assignment)}/{total_vars} variables"
         if not self.instance or len(self.assignment) != total_vars:
             return {
                 "status": "incomplete",
                 "variables_assigned": len(self.assignment),
                 "total_variables": total_vars,
                 "total_agents": len(self.agent_names),
+                "final_attendance_decisions": final_attendance_decisions,
             }
 
         joint_reward, agent_rewards = self.rewards(self.assignment)
@@ -401,5 +396,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "agent_rewards": agent_rewards,
             "attendance": self.assignment.copy(),
             "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
             "total_agents": len(self.agent_names),
+            "final_attendance_decisions": final_attendance_decisions,
         }

@@ -293,19 +293,16 @@ class SmartGridEnvironment(AbstractEnvironment):
             if "result" in response:
                 response["result"]["joint_reward"] = joint_reward
 
-    def cleanup(self) -> None:
-        print("SmartGrid environment cleanup")
-        if self.assignment:
-            print(f"Final assignments: {len(self.assignment)}/{len(self.problem.variables)} machines")
-
     def get_final_summary(self) -> Dict[str, Any]:
         total_vars = len(self.problem.variables)
+        final_assignments = f"{len(self.assignment)}/{total_vars} machines"
         if not self.instance or len(self.assignment) != total_vars:
             return {
                 "status": "incomplete",
                 "variables_assigned": len(self.assignment),
                 "total_variables": total_vars,
                 "total_agents": len(self.agent_names),
+                "final_assignments": final_assignments,
             }
 
         joint_reward, agent_rewards = self.rewards(self.assignment)
@@ -317,5 +314,7 @@ class SmartGridEnvironment(AbstractEnvironment):
             "agent_rewards": agent_rewards,
             "assignment": self.assignment.copy(),
             "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
             "total_agents": len(self.agent_names),
+            "final_assignments": final_assignments,
         }

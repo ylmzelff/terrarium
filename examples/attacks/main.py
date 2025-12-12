@@ -183,10 +183,9 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                         await communication_protocol.agent_execution_turn(agent, agent.name, agent_context, environment, iteration)
                     pbar.update(1)
 
-                environment._log_iteration_summary(current_iteration)
-            environment._generate_final_summary()
+                environment.log_iteration_summary(current_iteration)
+            environment.generate_final_summary()
         finally:
-            environment.cleanup()
             if provider == "vllm" and vllm_runtime:
                 vllm_runtime.shutdown()
 

@@ -949,26 +949,6 @@ class TradingGameEnvironment(AbstractEnvironment):
         else:
             print(f"        Failed to get response from {target_agent} for trade {trade['trade_id']}")
 
-    def cleanup(self, iteration: int) -> None:
-        """Clean up trading game resources."""
-        print("Cleaning up trading game environment...")
-
-        # Log final blackboard state
-        if self.blackboard_logger and self.blackboard_manager and self._factor_graph_blackboards:
-            for bb_string_id in self._factor_graph_blackboards:
-                blackboard = self.blackboard_manager.get_blackboard_by_string_id(bb_string_id)
-                if blackboard:
-                    self.blackboard_logger.log_blackboard_state(
-                        blackboard, iteration, "final", "SIMULATION_END"
-                    )
-            # Get any log file from the blackboard_log_files dict
-            log_files = getattr(self.blackboard_logger, 'blackboard_log_files', {})
-            if log_files:
-                first_log_file = next(iter(log_files.values()))
-                print(f"Final blackboard state saved: {first_log_file}")
-            else:
-                print("Final blackboard state saved")
-
     def handle_pending_response(self, response_type: str, target_agent: str,
                                context: Dict[str, Any]) -> Dict[str, Any]:
         """
