@@ -28,10 +28,11 @@ Use the following [documentation](https://aisec.cs.umass.edu/projects/terrarium/
 Follow the quick guide provided below for basic testing.
 
 ## Quick Start
-Clone the repository:
+Clone the repository and update submodules. A submodule exists at `external/CoLLAB` for external environments.
 ```bash
-git clone <repository-url>
+git clone <repository-url> terrarium
 cd terrarium
+git submodule update --init --recursive
 ```
 
 In this repo, we use [uv](https://docs.astral.sh/uv/) as our extremely fast package manager. If not already installed follow these [installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
