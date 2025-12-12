@@ -98,6 +98,7 @@ class AgentPoisoningAttack(Agent):
         trajectory_logger,
         environment_name,
         poison_payload,
+        generation_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(
             client,
@@ -107,6 +108,7 @@ class AgentPoisoningAttack(Agent):
             tool_logger,
             trajectory_logger,
             environment_name,
+            generation_params=generation_params,
         )
         self.poison_payload =  _load_poison_payload(Path(poison_payload))
 
@@ -147,6 +149,7 @@ class ContextOverflowAttack(Agent):
         trajectory_logger,
         environment_name,
         poison_payload,
+        generation_params: Optional[Dict[str, Any]] = None,
         # filler_token: str = "ATTACK",
         # repeat: int = 2048,
         # max_chars: Optional[int] = 16000,
@@ -162,6 +165,7 @@ class ContextOverflowAttack(Agent):
             tool_logger,
             trajectory_logger,
             environment_name,
+            generation_params=generation_params,
         )
         
         self.filler_token = _load_poison_payload(Path(poison_payload), "filler_token")

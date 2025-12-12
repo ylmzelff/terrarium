@@ -26,11 +26,13 @@ from src.utils import (
     get_model_name,
     build_vllm_runtime,
     handle_mcp_connection_error,
+    get_generation_params,
 )
 import asyncio
 from fastmcp import Client
 from requests.exceptions import ConnectionError
 from src.logger import ToolCallLogger, AgentTrajectoryLogger
+from dotenv import load_dotenv
 
 # Run src.server.py to initialzie MCP server before running main.py
 try:
@@ -96,6 +98,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             model_name = get_model_name(provider, llm_config)
         log_suffix = f" (server logs: {log_path})" if log_path else ""
         print(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
+        generation_params = get_generation_params(llm_config)
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
@@ -115,7 +118,8 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                 max_conversation_steps,
                 tool_logger,
                 trajectory_logger,
-                environment_name  # Pass environment name so agent can discover correct tools
+                environment_name,  # Pass environment name so agent can discover correct tools
+                generation_params=generation_params
             )
             agents.append(agent)
         # Shuffle initial agent order, and maintain order through simulation
@@ -163,6 +167,8 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         return False
 
 if __name__ == "__main__":
+    # Load API keys and other environment variables from .env file
+    load_dotenv()
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Run a multi-agent simulation")
     parser.add_argument("--config", type=str)
@@ -173,6 +179,5 @@ if __name__ == "__main__":
     config = load_config(args.config)
     if args.note:
         config.setdefault("simulation", {})["note"] = args.note
-
     # For running a single simulation
     asyncio.run(run_simulation(config))

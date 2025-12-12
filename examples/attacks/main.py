@@ -27,12 +27,14 @@ from src.utils import (
     get_model_name,
     build_vllm_runtime,
     handle_mcp_connection_error,
+    get_generation_params,
 )
 import asyncio
 from fastmcp import Client
 from attack_module.attack_modules import AgentPoisoningAttack, CommunicationProtocolPoisoningAttack, ContextOverflowAttack
 
 from requests.exceptions import ConnectionError
+from dotenv import load_dotenv
 
 try:
     mcp_client = Client("http://localhost:8000/mcp")
@@ -98,6 +100,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             model_name = get_model_name(provider, llm_config)
         log_suffix = f" (server logs: {log_path})" if log_path else ""
         print(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
+        generation_params = get_generation_params(llm_config)
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
@@ -120,6 +123,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     trajectory_logger,
                     environment_name,
                     args.poison_payload,
+                    generation_params=generation_params,
                 )
             elif args.attack_type == "context_overflow":
                 agent = ContextOverflowAttack(
@@ -131,6 +135,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     trajectory_logger,
                     environment_name,
                     args.poison_payload,
+                    generation_params=generation_params,
                 )
             else:
                 agent = Agent(
@@ -141,6 +146,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     tool_logger,
                     trajectory_logger,
                     environment_name,
+                    generation_params=generation_params,
                 )
             agents.append(agent)
         # Shuffle initial agent order, and maintain order through simulation
@@ -193,6 +199,8 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         return False
 
 if __name__ == "__main__":
+        # Load API keys and other environment variables from .env file
+    load_dotenv()
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Run a multi-agent simulation")
     parser.add_argument("--config", type=str)
