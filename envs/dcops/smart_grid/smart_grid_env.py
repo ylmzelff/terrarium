@@ -93,8 +93,8 @@ class SmartGridEnvironment(AbstractEnvironment):
         self.min_possible_score = float(getattr(self.instance, "min_utility", 0.0))
 
         # Score tracking
-        self.global_score_history: List[float] = []
-        self.local_scores_history: Dict[str, List[float]] = {a: [] for a in self.agent_names}
+        self.joint_reward_history: List[float] = []
+        self.agent_rewards_history: Dict[str, List[float]] = {a: [] for a in self.agent_names}
 
         # Prompts (tools are handled by MCP server)
         self.prompts = SmartGridPrompts(self, self.full_config)
@@ -170,7 +170,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         return local_reward
 
     def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
-        """Compute partial joint reward and per-agent rewards for a given joint assignment."""
+        """Compute joint reward and per-agent rewards for a given joint assignment."""
         total_reward = 0.0
         local_rewards: Dict[str, float] = {a: 0.0 for a in self.agent_names}
 
@@ -200,13 +200,13 @@ class SmartGridEnvironment(AbstractEnvironment):
 
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
-            global_score = self.joint_reward(self.assignment)
-            print(f"All machines assigned with global score: {global_score:.2f} - simulation complete")
+            joint_reward = self.joint_reward(self.assignment)
+            print(f"All machines assigned with joint reward: {joint_reward:.2f} - simulation complete")
             return True
         return False
 
-    def log_state(self, iteration: int, phase: str) -> None:
-        print(f"=== SmartGrid State - Iteration {iteration}, Phase {phase} ===")
+    def log_iteration(self, iteration: int) -> None:
+        print(f"=== SmartGrid State - Iteration {iteration} ===")
         total_vars = len(self.problem.variables)
         print(f"Machines: {total_vars} total, {len(self.assignment)} assigned")
 
@@ -215,19 +215,19 @@ class SmartGridEnvironment(AbstractEnvironment):
             for machine_id, source_id in sorted(self.assignment.items()):
                 print(f"  {machine_id} -> {source_id}")
 
-        global_score, local_scores = self.rewards(self.assignment)
-        ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
-        print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
+        joint_reward, agent_rewards = self.rewards(self.assignment)
+        ratio = joint_reward / self.max_possible_score if self.max_possible_score else 0.0
+        print(f"Current Joint Reward: {joint_reward:.2f} (ratio {ratio:.2%})")
 
-        self._track_scores(iteration, global_score, local_scores)
+        self._track_scores(iteration, joint_reward, agent_rewards)
 
-    def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
+    def _track_scores(self, iteration: int, joint_reward: float, agent_rewards: Dict[str, float]) -> None:
         import json
         from datetime import datetime
 
-        self.global_score_history.append(global_score)
-        for agent, score in local_scores.items():
-            self.local_scores_history.setdefault(agent, []).append(score)
+        self.joint_reward_history.append(joint_reward)
+        for agent, reward in agent_rewards.items():
+            self.agent_rewards_history.setdefault(agent, []).append(reward)
 
         tag_model = get_tag_model_subdir(self.full_config)
         log_dir = build_log_dir("SmartGrid", tag_model, self.current_seed, self.run_timestamp)
@@ -237,13 +237,13 @@ class SmartGridEnvironment(AbstractEnvironment):
             "environment": "SmartGrid",
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
-            "global_score": global_score,
-            "global_ratio": global_score / self.max_possible_score if self.max_possible_score else 0.0,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
             "metadata": {
-                "total_agents": len(local_scores),
+                "total_agents": len(agent_rewards),
                 "variables_assigned": len(self.assignment),
                 "total_variables": len(self.problem.variables),
             },
@@ -289,23 +289,14 @@ class SmartGridEnvironment(AbstractEnvironment):
 
     def post_tool_execution_callback(self, state_updates: Dict[str, Any], response: Dict[str, Any]) -> None:
         if "assignment" in state_updates:
-            global_score = self.joint_reward(self.assignment)
+            joint_reward = self.joint_reward(self.assignment)
             if "result" in response:
-                response["result"]["global_score"] = global_score
+                response["result"]["joint_reward"] = joint_reward
 
     def cleanup(self) -> None:
         print("SmartGrid environment cleanup")
         if self.assignment:
             print(f"Final assignments: {len(self.assignment)}/{len(self.problem.variables)} machines")
-
-    def get_iteration_summary(self) -> Dict[str, Any]:
-        total_vars = len(self.problem.variables)
-        return {
-            "variables_assigned": len(self.assignment),
-            "total_variables": total_vars,
-            "total_agents": len(self.agent_names),
-            "completion_rate": len(self.assignment) / total_vars if total_vars else 0.0,
-        }
 
     def get_final_summary(self) -> Dict[str, Any]:
         total_vars = len(self.problem.variables)
@@ -317,13 +308,13 @@ class SmartGridEnvironment(AbstractEnvironment):
                 "total_agents": len(self.agent_names),
             }
 
-        global_score, local_scores = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self.rewards(self.assignment)
         return {
             "status": "complete",
-            "global_score": global_score,
-            "global_ratio": global_score / self.max_possible_score if self.max_possible_score else 0.0,
-            "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0.0,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
             "assignment": self.assignment.copy(),
             "total_variables": total_vars,
             "total_agents": len(self.agent_names),

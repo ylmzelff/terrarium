@@ -99,8 +99,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.problem: ProblemDefinition = self.instance.problem
 
         # Score tracking
-        self.global_score_history: List[float] = []
-        self.local_scores_history: Dict[str, List[float]] = {}
+        self.joint_reward_history: List[float] = []
+        self.agent_rewards_history: Dict[str, List[float]] = {}
         self.agent_names = list(self.problem.agents.keys())
         self.agents: List['Agent'] = [] # Set this later in main.py in case agents get different clients or settings
         self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
@@ -110,7 +110,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.prompts = PersonalAssistantPrompts(self, self.full_config)
 
         # Initialize score tracking
-        self.local_scores_history = {agent: [] for agent in self.agent_names}
+        self.agent_rewards_history = {agent: [] for agent in self.agent_names}
 
         print(f"PersonalAssistant environment initialized with {len(self.agent_names)} agents")
         print(f"Agents: {', '.join(self.agent_names)}")
@@ -200,14 +200,14 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         # Stop early if all variables assigned and max reward reached
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars and self.instance:
-            global_score = self.joint_reward(self.assignment)
-            if self.max_possible_score and global_score >= self.max_possible_score:
+            joint_reward = self.joint_reward(self.assignment)
+            if self.max_possible_score and joint_reward >= self.max_possible_score:
                 print(
-                    f"All constraints satisfied (score: {global_score}/{self.max_possible_score}) - simulation complete"
+                    f"All constraints satisfied (score: {joint_reward}/{self.max_possible_score}) - simulation complete"
                 )
                 return True
             print(
-                f"All agents selected but constraints not fully satisfied (score: {global_score}/{self.max_possible_score}) - continuing"
+                f"All agents selected but constraints not fully satisfied (score: {joint_reward}/{self.max_possible_score}) - continuing"
             )
 
         return False
@@ -227,7 +227,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
     def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
-        Compute partial joint reward and per-agent rewards for a given joint assignment.
+        Compute joint reward and per-agent rewards for a given joint assignment.
 
         Factors whose full scope has been assigned contribute to the total reward.
         Per-agent rewards are attributed evenly to variable owners in scope.
@@ -252,15 +252,14 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
         return total_reward, local_rewards
 
-    def log_state(self, iteration: int, phase: str) -> None:
+    def log_iteration(self, iteration: int) -> None:
         """
         Log the current state of the environment.
 
         Args:
             iteration: Current iteration number
-            phase: Current phase
         """
-        print(f"=== PersonalAssistant State - Iteration {iteration}, Phase {phase} ===")
+        print(f"=== PersonalAssistant State - Iteration {iteration} ===")
         print(f"Agents: {len(self.agent_names)} total, {len(self.outfit_selections)} selected outfits")
 
         if self.outfit_selections:
@@ -272,23 +271,23 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         if remaining:
             print(f"Remaining agents: {', '.join(remaining)}")
 
-        global_score, local_scores = self.rewards(self.assignment)
-        ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
-        print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
+        joint_reward, agent_rewards = self.rewards(self.assignment)
+        ratio = joint_reward / self.max_possible_score if self.max_possible_score else 0.0
+        print(f"Current Joint Reward: {joint_reward:.2f} (ratio {ratio:.2%})")
 
         # Track scores for every iteration
-        self._track_scores(iteration, global_score, local_scores)
+        self._track_scores(iteration, joint_reward, agent_rewards)
 
-    def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
+    def _track_scores(self, iteration: int, joint_reward: float, agent_rewards: Dict[str, float]) -> None:
         """Track scores and write logs."""
         import json
         from datetime import datetime
 
         # Update score histories
-        self.global_score_history.append(global_score)
-        for agent, score in local_scores.items():
-            if agent in self.local_scores_history:
-                self.local_scores_history[agent].append(score)
+        self.joint_reward_history.append(joint_reward)
+        for agent, reward in agent_rewards.items():
+            if agent in self.agent_rewards_history:
+                self.agent_rewards_history[agent].append(reward)
 
         # Create logs directory with seed subdirectory
         # Get tag_model subdirectory
@@ -301,17 +300,17 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             "environment": "PersonalAssistant",
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
-            "global_score": global_score/self.max_possible_score if self.max_possible_score > 0 else 0.0,
-            "raw_global_score": global_score,
+            "joint_reward": joint_reward/self.max_possible_score if self.max_possible_score > 0 else 0.0,
+            "raw_joint_reward": joint_reward,
             "max_possible_score": self.max_possible_score,
-            "local_scores": local_scores,
+            "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
             "metadata": {
-                "total_agents": len(local_scores),
+                "total_agents": len(agent_rewards),
                 "total_outfits_selected": len(self.outfit_selections),
-                "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0
-            }
+                "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            },
         }
 
         score_file = log_dir / f"scores_iteration_{iteration}.json"
@@ -394,9 +393,9 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             response: The response dictionary to potentially modify
         """
         if "outfit_selections" in state_updates:
-            global_score = self.joint_reward(self.assignment)
+            joint_reward = self.joint_reward(self.assignment)
             if "result" in response:
-                response["result"]["global_score"] = global_score
+                response["result"]["joint_reward"] = joint_reward
                 response["result"]["max_possible_score"] = self.max_possible_score
 
     def _generate_final_summary(self):
@@ -419,31 +418,16 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
                 else:
                     print(f"{key}: {value}")
 
-    def _log_iteration_summary(self, iteration: int):
+    def log_iteration_summary(self, iteration: int):
         """Log the summary of an iteration."""
         print(f"\n--- ITERATION {iteration} SUMMARY ---")
-        self.log_state(iteration, "iteration_end")
-
-        # Get environment-specific summary
-        summary = self.get_iteration_summary()
-        if summary:
-            print(f"  Iteration {iteration} summary:")
-            for key, value in summary.items():
-                print(f"    {key}: {value}")
+        self.log_iteration(iteration)
 
     def cleanup(self) -> None:
         """Clean up any resources used by the environment."""
         print("PersonalAssistant environment cleanup")
         if self.outfit_selections:
             print(f"Final selections: {len(self.outfit_selections)}/{len(self.agent_names)} agents")
-
-    def get_iteration_summary(self) -> Dict[str, Any]:
-        """Get a summary of the current iteration for logging."""
-        return {
-            "selections_made": len(self.outfit_selections),
-            "total_agents": len(self.agent_names),
-            "completion_rate": len(self.outfit_selections) / len(self.agent_names) if self.agent_names else 0
-        }
 
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
@@ -456,14 +440,14 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
                 "total_agents": len(self.agent_names),
             }
 
-        global_score, local_scores = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self.rewards(self.assignment)
 
         return {
             "status": "complete",
-            "global_score": global_score / self.max_possible_score if self.max_possible_score > 0 else 0.0,
-            "raw_global_score": global_score,
-            "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0.0,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward / self.max_possible_score if self.max_possible_score > 0 else 0.0,
+            "raw_joint_reward": joint_reward,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
             "outfit_selections": {
                 agent: {"article": outfit.article, "color": outfit.color}
                 for agent, outfit in self.outfit_selections.items()

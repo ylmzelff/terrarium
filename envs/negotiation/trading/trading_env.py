@@ -155,8 +155,8 @@ class TradingGameEnvironment(AbstractEnvironment):
         self.budget_history = {agent.name: [] for agent in self.agents}
 
         # Initialize score tracking for JSON logging (similar to other environments)
-        self.global_score_history: List[float] = []
-        self.local_scores_history: Dict[str, List[float]] = {agent.name: [] for agent in self.agents}
+        self.joint_reward_history: List[float] = []
+        self.agent_rewards_history: Dict[str, List[float]] = {agent.name: [] for agent in self.agents}
 
         # Record initial utilities and budgets (before any trading)
         for agent in self.agents:
@@ -780,38 +780,29 @@ class TradingGameEnvironment(AbstractEnvironment):
         max_iterations = self.config.get("max_iterations", 3)
         return iteration > max_iterations
 
-    def log_state(self, iteration: int, phase: str) -> None:
-        """Log trading game state."""
-        # Log game state information
-        if phase == "initialization":
-            self._log_initial_state()
-        elif phase == "iteration_end":
-            self._log_iteration_state(iteration)
+    def log_iteration(self, iteration: int) -> None:
+        """Log trading game state for the current iteration."""
+        self._log_iteration_state(iteration)
 
-        # Update utility and budget tracking
-        if phase == "iteration_end":
-            for agent in self.agents:
-                self.utility_history[agent.name].append(agent.state.current_utility)
-                self.budget_history[agent.name].append(agent.state.budget)
+        for agent in self.agents:
+            self.utility_history[agent.name].append(agent.state.current_utility)
+            self.budget_history[agent.name].append(agent.state.budget)
 
-            # Calculate and track scores like other environments
-            global_score = sum(agent.state.current_utility for agent in self.agents)
-            local_scores = {agent.name: float(agent.state.current_utility) for agent in self.agents}
+        joint_reward = sum(agent.state.current_utility for agent in self.agents)
+        agent_rewards = {agent.name: float(agent.state.current_utility) for agent in self.agents}
+        self._track_scores(iteration, joint_reward, agent_rewards)
 
-            # Track scores and generate JSON logs and plots
-            self._track_scores(iteration, global_score, local_scores)
-
-    def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
+    def _track_scores(self, iteration: int, joint_reward: float, agent_rewards: Dict[str, float]) -> None:
         """Track scores and write logs similar to other environments."""
         import json
         from datetime import datetime
         from pathlib import Path
 
         # Update score histories
-        self.global_score_history.append(global_score)
-        for agent, score in local_scores.items():
-            if agent in self.local_scores_history:
-                self.local_scores_history[agent].append(score)
+        self.joint_reward_history.append(joint_reward)
+        for agent, reward in agent_rewards.items():
+            if agent in self.agent_rewards_history:
+                self.agent_rewards_history[agent].append(reward)
 
         tag_model = get_tag_model_subdir(self.full_config)
         log_dir = build_log_dir("Trading", tag_model, self.seed, self.run_timestamp)
@@ -822,14 +813,14 @@ class TradingGameEnvironment(AbstractEnvironment):
             "environment": "Trading",
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
-            "global_score": global_score,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward,
+            "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
             "metadata": {
-                "total_agents": len(local_scores),
-                "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0,
-                "total_utility": global_score,
+                "total_agents": len(agent_rewards),
+                "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+                "total_utility": joint_reward,
                 "total_budget": sum(agent.state.budget for agent in self.agents)
             }
         }
@@ -1024,20 +1015,6 @@ class TradingGameEnvironment(AbstractEnvironment):
             "target_agent": target_agent,
             "context": context
         }
-
-    def get_iteration_summary(self, _iteration: int) -> Dict[str, Any]:
-        """Get trading game iteration summary."""
-        summary = {}
-
-        if self.trade_manager:
-            trade_stats = self.trade_manager.get_trade_statistics()
-            summary.update({
-                "total_trades": trade_stats['total_trades'],
-                "executed_trades": trade_stats['status_breakdown']['executed'],
-                "success_rate": f"{trade_stats['success_rate']:.1%}"
-            })
-
-        return summary
 
     def get_final_summary(self) -> Dict[str, Any]:
         """Get final trading game summary."""

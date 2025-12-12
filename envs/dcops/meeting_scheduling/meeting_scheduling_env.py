@@ -90,8 +90,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.problem: ProblemDefinition = self.instance.problem
 
         # Score tracking
-        self.global_score_history: List[float] = []
-        self.local_scores_history: Dict[str, List[float]] = {}
+        self.joint_reward_history: List[float] = []
+        self.agent_rewards_history: Dict[str, List[float]] = {}
         self.agent_names = list(self.problem.agents.keys())
         self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
         self.agents: List['Agent'] = []
@@ -100,7 +100,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.prompts = MeetingSchedulingPrompts(self, self.full_config)
 
         # Initialize score tracking
-        self.local_scores_history = {agent: [] for agent in self.agent_names}
+        self.agent_rewards_history = {agent: [] for agent in self.agent_names}
 
         print(f"MeetingScheduling environment initialized with {len(self.agent_names)} agents")
         print(f"Agents: {', '.join(self.agent_names)}")
@@ -152,17 +152,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 else:
                     print(f"{key}: {value}")
 
-    def _log_iteration_summary(self, iteration: int):
+    def log_iteration_summary(self, iteration: int):
         """Log the summary of an iteration."""
         print(f"\n--- ITERATION {iteration} SUMMARY ---")
-        self.log_state(iteration, "iteration_end")
-
-        # Get environment-specific summary
-        summary = self.get_iteration_summary()
-        if summary:
-            print(f"  Iteration {iteration} summary:")
-            for key, value in summary.items():
-                print(f"    {key}: {value}")
+        self.log_iteration(iteration)
 
     def get_agent_names(self) -> List[str]:
         """Get list of agent names."""
@@ -218,9 +211,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Stop early if all variables have been assigned
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
-            global_score = self.joint_reward(self.assignment)
+            joint_reward = self.joint_reward(self.assignment)
             print(
-                f"All attendance decisions made with global score: {global_score:.2f} - simulation complete"
+                f"All attendance decisions made with joint reward: {joint_reward:.2f} - simulation complete"
             )
             return True
 
@@ -241,7 +234,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
-        Compute partial joint reward and per-agent rewards for a given joint assignment.
+        Compute joint reward and per-agent rewards for a given joint assignment.
 
         We sum factor rewards whose full scope has been assigned.
         Per-agent rewards are attributed evenly to owners of variables in a factor's scope.
@@ -267,15 +260,14 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return total_reward, local_rewards
 
 
-    def log_state(self, iteration: int, phase: str) -> None:
+    def log_iteration(self, iteration: int) -> None:
         """
         Log the current state of the environment.
 
         Args:
             iteration: Current iteration number
-            phase: Current phase
         """
-        print(f"=== MeetingScheduling State - Iteration {iteration}, Phase {phase} ===")
+        print(f"=== MeetingScheduling State - Iteration {iteration} ===")
         total_vars = len(self.problem.variables)
         print(f"Variables: {total_vars} total, {len(self.assignment)} assigned")
 
@@ -284,23 +276,23 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             for var_name, value in sorted(self.assignment.items()):
                 print(f"  {var_name}: {value}")
 
-        global_score, local_scores = self.rewards(self.assignment)
-        ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
-        print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
+        joint_reward, agent_rewards = self.rewards(self.assignment)
+        ratio = joint_reward / self.max_possible_score if self.max_possible_score else 0.0
+        print(f"Current Joint Reward: {joint_reward:.2f} (ratio {ratio:.2%})")
 
         # Track scores for every iteration
-        self._track_scores(iteration, global_score, local_scores)
+        self._track_scores(iteration, joint_reward, agent_rewards)
 
-    def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
+    def _track_scores(self, iteration: int, joint_reward: float, agent_rewards: Dict[str, float]) -> None:
         """Track scores and write logs."""
         import json
         from datetime import datetime
 
         # Update score histories
-        self.global_score_history.append(global_score)
-        for agent, score in local_scores.items():
-            if agent in self.local_scores_history:
-                self.local_scores_history[agent].append(score)
+        self.joint_reward_history.append(joint_reward)
+        for agent, reward in agent_rewards.items():
+            if agent in self.agent_rewards_history:
+                self.agent_rewards_history[agent].append(reward)
 
         # Create logs directory with seed subdirectory
         # Get tag_model subdirectory
@@ -313,17 +305,17 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "environment": "MeetingScheduling",
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
-            "global_score": global_score,
-            "global_ratio": global_score / self.max_possible_score if self.max_possible_score else 0.0,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
             "metadata": {
-                "total_agents": len(local_scores),
+                "total_agents": len(agent_rewards),
                 "variables_assigned": len(self.assignment),
                 "total_variables": len(self.problem.variables),
-                "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0
-            }
+                "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            },
         }
 
         score_file = log_dir / f"scores_iteration_{iteration}.json"
@@ -378,9 +370,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             response: The response dictionary to potentially modify
         """
         if "attendance" in state_updates:
-            global_score = self.joint_reward(self.assignment)
+            joint_reward = self.joint_reward(self.assignment)
             if "result" in response:
-                response["result"]["global_score"] = global_score
+                response["result"]["joint_reward"] = joint_reward
 
     def cleanup(self) -> None:
         """Clean up any resources used by the environment."""
@@ -388,16 +380,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         total_vars = len(self.problem.variables)
         if self.assignment:
             print(f"Final attendance decisions: {len(self.assignment)}/{total_vars} variables")
-
-    def get_iteration_summary(self) -> Dict[str, Any]:
-        """Get a summary of the current iteration for logging."""
-        total_vars = len(self.problem.variables)
-        return {
-            "variables_assigned": len(self.assignment),
-            "total_variables": total_vars,
-            "total_agents": len(self.agent_names),
-            "completion_rate": len(self.assignment) / total_vars if total_vars > 0 else 0
-        }
 
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
@@ -410,13 +392,13 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "total_agents": len(self.agent_names),
             }
 
-        global_score, local_scores = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self.rewards(self.assignment)
         return {
             "status": "complete",
-            "global_score": global_score,
-            "global_ratio": global_score / self.max_possible_score if self.max_possible_score else 0.0,
-            "average_local_score": sum(local_scores.values()) / len(local_scores) if local_scores else 0.0,
-            "local_scores": local_scores,
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
             "attendance": self.assignment.copy(),
             "total_variables": total_vars,
             "total_agents": len(self.agent_names),

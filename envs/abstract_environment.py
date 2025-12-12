@@ -84,13 +84,12 @@ class AbstractEnvironment(ABC):
         pass
 
     @abstractmethod
-    def log_state(self, iteration: int, phase: str) -> None:
+    def log_iteration(self, iteration: int) -> None:
         """
         Log the current state of the environment.
 
         Args:
             iteration: Current iteration number
-            phase: Current phase
 
         This should log environment-specific state information separately
         from the conversation logging handled by the protocol.
@@ -135,21 +134,6 @@ class AbstractEnvironment(ABC):
             "success": False,
             "reason": f"Environment does not support {response_type} responses"
         }
-
-    def get_iteration_summary(self, iteration: int) -> Dict[str, Any]:
-        """
-        Get a summary of the current iteration for logging.
-
-        Args:
-            iteration: Current iteration number
-
-        Returns:
-            Dictionary with iteration summary
-
-        Default implementation returns empty summary. Environments can override
-        to provide meaningful iteration statistics.
-        """
-        return {}
 
     def get_final_summary(self) -> Dict[str, Any]:
         """

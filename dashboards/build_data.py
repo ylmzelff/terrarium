@@ -97,7 +97,7 @@ def load_runs(log_root: Path) -> List[Dict[str, Any]]:
                 continue
             scores.append({
                 "iteration": score_data.get("iteration"),
-                "global_score": score_data.get("global_score"),
+                "joint_reward": score_data.get("joint_reward"),
                 "timestamp": score_data.get("timestamp"),
                 "model_info": score_data.get("model_info"),
                 "metadata": score_data.get("metadata"),
