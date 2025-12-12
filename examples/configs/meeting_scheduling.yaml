@@ -7,8 +7,10 @@ simulation:
   note: "im a note"
 environment:
   name: MeetingScheduling
-  n_agents: 10
-  n_meetings: 15
+  # n_agents: 10
+  # n_meetings: 15
+  n_agents: 3
+  n_meetings: 3
   max_attendees_per_meeting: 4
   p_zoom: 0.3
   min_prefs_per_agent: 3
@@ -17,18 +19,34 @@ environment:
   rng_seed: 42
 llm:
   # Provider: "openai", "anthropic", "gemini", or "vllm"
-  provider: "vllm"
+  provider: "openai"
   openai:
     model: "gpt-4.1-mini-2025-04-14"
+    params:
+      max_tokens: 1024
+      temperature: 0.7
+      reasoning_effort: "low"
+      verbosity: "low"
   anthropic:
     model: "claude-3-5-sonnet-20241022"
+    params:
+      max_tokens: 4000
+      temperature: 0.7
+      top_p: 0.95
   gemini:
     model: "gemini-2.0-flash-lite"
+    params:
+      max_tokens: 1024
+      temperature: 0.6
+      top_p: 0.95
   vllm:
     auto_start_server: true
     persistent_server: false  # Keep the vLLM server alive between runs to avoid cold starts
     health_check_path: "/models"
     startup_timeout: 420 # When starting a new server, max time (s) to wait for it to be ready
+    params:
+      max_tokens: 1024
+      temperature: 0.7
     models:
       - checkpoint: "Qwen/Qwen2.5-7B-Instruct"
         host: "127.0.0.1"
