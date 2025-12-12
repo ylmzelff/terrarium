@@ -45,9 +45,7 @@ class AbstractEnvironment(ABC):
         pass
 
     @abstractmethod
-    def build_agent_context(self, agent_name: str, phase: str, iteration: int,
-                          blackboard_contexts: Optional[Dict[str, str]] = None,
-                          **kwargs) -> Dict[str, Any]:
+    def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
         Build environment-specific context for an agent's turn.
 
@@ -55,7 +53,6 @@ class AbstractEnvironment(ABC):
             agent_name: Name of the agent
             phase: Current phase ("planning" or "execution")
             iteration: Current iteration number
-            blackboard_contexts: Blackboard contexts from the protocol
             **kwargs: Additional context (planning_round, etc.)
 
         Returns:

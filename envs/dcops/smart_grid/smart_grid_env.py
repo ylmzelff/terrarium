@@ -11,6 +11,8 @@ timeline, minimising overflow to the main grid.
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
 
+import logging
+
 if TYPE_CHECKING:
     from src.agent import Agent
 
@@ -27,6 +29,8 @@ from src.utils import (
 )
 
 from .smartgrid_prompts import SmartGridPrompts
+
+logger = logging.getLogger(__name__)
 
 
 class SmartGridEnvironment(AbstractEnvironment):
@@ -89,7 +93,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         self.problem: ProblemDefinition = self.instance.problem
 
         self.agent_names: List[str] = list(self.problem.agents.keys())
-        self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
+        self.max_joint_reward = float(getattr(self.instance, "max_utility", 0.0))
         self.min_possible_score = float(getattr(self.instance, "min_utility", 0.0))
 
         # Score tracking
@@ -99,10 +103,10 @@ class SmartGridEnvironment(AbstractEnvironment):
         # Prompts (tools are handled by MCP server)
         self.prompts = SmartGridPrompts(self, self.full_config)
 
-        print(f"SmartGrid environment initialized with {len(self.agent_names)} agents")
-        print(f"Agents: {', '.join(self.agent_names)}")
-        print(f"Total machines: {len(self.problem.variables)}")
-        print(f"Timeline length: {self.instance.timeline_length} slots")
+        logger.info("SmartGrid environment initialized with %s agents", len(self.agent_names))
+        logger.info("Agents: %s", ", ".join(self.agent_names))
+        logger.info("Total machines: %s", len(self.problem.variables))
+        logger.info("Timeline length: %s slots", self.instance.timeline_length)
 
     async def async_init(self):
         await self.create_comm_network()
@@ -119,21 +123,18 @@ class SmartGridEnvironment(AbstractEnvironment):
             "to the main grid."
         )
         blackboard_id = await self.communication_protocol.generate_comm_network(self.agent_names, context)
-        print(f"Created Global Power Grid Blackboard {blackboard_id}: {', '.join(self.agent_names)}")
+        logger.info(
+            "Created Global Power Grid Blackboard %s: %s",
+            blackboard_id,
+            ", ".join(self.agent_names),
+        )
 
     def get_agent_names(self) -> List[str]:
         return self.agent_names.copy()
 
-    def build_agent_context(
-        self,
-        agent_name: str,
-        phase: str,
-        iteration: int,
-        blackboard_contexts: Optional[Dict[str, str]] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
+    def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         if phase == "planning" and iteration > 1 and self.assignment:
-            print(f"SmartGrid: Clearing assignments for iteration {iteration}")
+            logger.info("SmartGrid: Clearing assignments for iteration %s", iteration)
             self.assignment = {}
 
         agent_vars = [var.name for var in self.problem.agent_variables(agent_name)]
@@ -195,29 +196,32 @@ class SmartGridEnvironment(AbstractEnvironment):
         assert self.config is not None, "Config not available"
         max_iterations = self.config.get("max_iterations", 10)
         if iteration > max_iterations:
-            print(f"Reached max iterations ({max_iterations}) - stopping simulation")
+            logger.info("Reached max iterations (%s) - stopping simulation", max_iterations)
             return True
 
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
             joint_reward = self.joint_reward(self.assignment)
-            print(f"All machines assigned with joint reward: {joint_reward:.2f} - simulation complete")
+            logger.info(
+                "All machines assigned with joint reward: %.2f - simulation complete",
+                joint_reward,
+            )
             return True
         return False
 
     def log_iteration(self, iteration: int) -> None:
-        print(f"=== SmartGrid State - Iteration {iteration} ===")
+        logger.info("=== SmartGrid State - Iteration %s ===", iteration)
         total_vars = len(self.problem.variables)
-        print(f"Machines: {total_vars} total, {len(self.assignment)} assigned")
+        logger.info("Machines: %s total, %s assigned", total_vars, len(self.assignment))
 
         if self.assignment:
-            print("Current Assignments:")
+            logger.info("Current Assignments:")
             for machine_id, source_id in sorted(self.assignment.items()):
-                print(f"  {machine_id} -> {source_id}")
+                logger.info("  %s -> %s", machine_id, source_id)
 
         joint_reward, agent_rewards = self.rewards(self.assignment)
-        ratio = joint_reward / self.max_possible_score if self.max_possible_score else 0.0
-        print(f"Current Joint Reward: {joint_reward:.2f} (ratio {ratio:.2%})")
+        ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
+        logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
 
         self._track_scores(iteration, joint_reward, agent_rewards)
 
@@ -238,7 +242,7 @@ class SmartGridEnvironment(AbstractEnvironment):
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
             "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
             "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
@@ -280,7 +284,7 @@ class SmartGridEnvironment(AbstractEnvironment):
             "assignment": self.assignment.copy(),
             "agent_names": self.agent_names.copy(),
             "timeline_length": self.instance.timeline_length,
-            "max_possible_score": self.max_possible_score,
+            "max_joint_reward": self.max_joint_reward,
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:
@@ -309,7 +313,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         return {
             "status": "complete",
             "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
             "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
             "agent_rewards": agent_rewards,
             "assignment": self.assignment.copy(),

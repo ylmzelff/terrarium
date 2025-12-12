@@ -14,6 +14,8 @@ import logging
 from problem_layer.meeting_scheduling import MeetingSchedulingConfig, generate_instance
 from problem_layer.base import ProblemDefinition
 
+logger = logging.getLogger(__name__)
+
 # Use TYPE_CHECKING to avoid circular import (Agent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → Agent)
 if TYPE_CHECKING:
     from src.agent import Agent
@@ -91,21 +93,20 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
         # Score tracking
         self.joint_reward_history: List[float] = []
-        self.agent_rewards_history: Dict[str, List[float]] = {}
         self.agent_names = list(self.problem.agents.keys())
-        self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
+        self.max_joint_reward = float(getattr(self.instance, "max_utility", 0.0))
         self.agents: List['Agent'] = []
 
         # Initialize prompts (Put this after all other instance variables)
         self.prompts = MeetingSchedulingPrompts(self, self.full_config)
 
         # Initialize score tracking
-        self.agent_rewards_history = {agent: [] for agent in self.agent_names}
+        self.agent_rewards_history: Dict[str, List[float]] = {agent: [] for agent in self.agent_names}
 
-        print(f"MeetingScheduling environment initialized with {len(self.agent_names)} agents")
-        print(f"Agents: {', '.join(self.agent_names)}")
-        print(f"Total meetings: {len(self.instance.meetings)}")
-        print("MeetingSchedulingEnvironment initialized")
+        logger.info("MeetingScheduling environment initialized with %s agents", len(self.agent_names))
+        logger.info("Agents: %s", ", ".join(self.agent_names))
+        logger.info("Total meetings: %s", len(self.instance.meetings))
+        logger.info("MeetingSchedulingEnvironment initialized")
 
     async def async_init(self):
         await self.create_comm_network()
@@ -120,7 +121,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         for meeting in self.instance.meetings:
             participants = list(meeting.participants)
             if len(participants) < 2:
-                logging.warning(f"Skipping blackboard creation for meeting {meeting.meeting_id} with less than 2 participants")
+                logger.warning(
+                    "Skipping blackboard creation for meeting %s with less than 2 participants",
+                    meeting.meeting_id,
+                )
                 continue
 
             context = (
@@ -130,31 +134,36 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "fully attend strict meetings, and avoid double‑booking."
             )
             blackboard_id = await self.communication_protocol.generate_comm_network(participants, context)
-            print(f"Created Meeting Blackboard {blackboard_id}: {participants} for {meeting.meeting_id}")
+            logger.info(
+                "Created Meeting Blackboard %s: %s for %s",
+                blackboard_id,
+                participants,
+                meeting.meeting_id,
+            )
 
     def generate_final_summary(self):
         """Generate final simulation summary."""
-        print("\n" + "=" * 60)
-        print("SIMULATION COMPLETE - FINAL SUMMARY")
-        print("=" * 60)
+        logger.info("%s", "=" * 60)
+        logger.info("SIMULATION COMPLETE - FINAL SUMMARY")
+        logger.info("%s", "=" * 60)
 
         # Get environment-specific final summary
         final_summary = self.get_final_summary()
 
-        print(f"Total iterations: {self.current_iteration}")
+        logger.info("Total iterations: %s", self.current_iteration)
 
         if final_summary:
             for key, value in final_summary.items():
                 if isinstance(value, dict):
-                    print(f"{key}:")
+                    logger.info("%s:", key)
                     for sub_key, sub_value in value.items():
-                        print(f"  {sub_key}: {sub_value}")
+                        logger.info("  %s: %s", sub_key, sub_value)
                 else:
-                    print(f"{key}: {value}")
+                    logger.info("%s: %s", key, value)
 
     def log_iteration_summary(self, iteration: int):
         """Log the summary of an iteration."""
-        print(f"\n--- ITERATION {iteration} SUMMARY ---")
+        logger.info("--- ITERATION %s SUMMARY ---", iteration)
         self.log_iteration(iteration)
 
     def get_agent_names(self) -> List[str]:
@@ -205,15 +214,16 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         assert self.config is not None, "Config not available"
         max_iterations = self.config.get("max_iterations", 10)
         if iteration > max_iterations:
-            print(f"Reached max iterations ({max_iterations}) - stopping simulation")
+            logger.info("Reached max iterations (%s) - stopping simulation", max_iterations)
             return True
 
         # Stop early if all variables have been assigned
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
             joint_reward = self.joint_reward(self.assignment)
-            print(
-                f"All attendance decisions made with joint reward: {joint_reward:.2f} - simulation complete"
+            logger.info(
+                "All attendance decisions made with joint reward: %.2f - simulation complete",
+                joint_reward,
             )
             return True
 
@@ -267,18 +277,18 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         Args:
             iteration: Current iteration number
         """
-        print(f"=== MeetingScheduling State - Iteration {iteration} ===")
+        logger.info("=== MeetingScheduling State - Iteration %s ===", iteration)
         total_vars = len(self.problem.variables)
-        print(f"Variables: {total_vars} total, {len(self.assignment)} assigned")
+        logger.info("Variables: %s total, %s assigned", total_vars, len(self.assignment))
 
         if self.assignment:
-            print("Current Attendance Decisions:")
+            logger.info("Current Attendance Decisions:")
             for var_name, value in sorted(self.assignment.items()):
-                print(f"  {var_name}: {value}")
+                logger.info("  %s: %s", var_name, value)
 
         joint_reward, agent_rewards = self.rewards(self.assignment)
-        ratio = joint_reward / self.max_possible_score if self.max_possible_score else 0.0
-        print(f"Current Joint Reward: {joint_reward:.2f} (ratio {ratio:.2%})")
+        ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
+        logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
 
         # Track scores for every iteration
         self._track_scores(iteration, joint_reward, agent_rewards)
@@ -306,7 +316,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
             "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
             "agent_rewards": agent_rewards,
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
@@ -391,7 +401,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return {
             "status": "complete",
             "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_possible_score if self.max_possible_score else 0.0,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
             "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
             "agent_rewards": agent_rewards,
             "attendance": self.assignment.copy(),

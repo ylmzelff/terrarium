@@ -64,7 +64,7 @@ class PersonalAssistantTools:
         outfit_selections = env_state.get("outfit_selections", {})
         agent_names = env_state.get("agent_names", [])
         wardrobe_options = env_state.get("wardrobe_options", {})
-        max_possible_score = env_state.get("max_possible_score", 0)
+        max_joint_reward = env_state.get("max_joint_reward", 0)
 
         if agent_name not in agent_names:
             return {"status": "failed", "reason": f"Agent {agent_name} not found"}

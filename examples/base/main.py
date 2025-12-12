@@ -3,6 +3,7 @@ Main script to run a base/vanilla simulation
 """
 # Add project root to path so we can import modules
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -155,6 +156,15 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         return False
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("TERRARIUM_LOG_LEVEL", "INFO").upper(), logging.INFO),
+        # format="[%(levelname)s] %(name)s: %(message)s",
+        format="[%(levelname)s]: %(message)s",
+        force=True,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
     # Load API keys and other environment variables from .env file
     load_dotenv()
     # Parse command-line arguments
