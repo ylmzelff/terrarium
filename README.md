@@ -30,8 +30,8 @@ Follow the quick guide provided below for basic testing.
 ## Quick Start
 Clone the repository and update submodules. A submodule exists at `external/CoLLAB` for external environments.
 ```bash
-git clone <repository-url> terrarium
-cd terrarium
+git clone <repository-url> Terrarium
+cd Terrarium
 git submodule update --init --recursive
 ```
 
