@@ -28,7 +28,7 @@ Use the following [documentation](https://aisec.cs.umass.edu/projects/terrarium/
 Follow the quick guide provided below for basic testing.
 
 ## Quick Start
-Clone the repository and update submodules. A submodule exists at `external/CoLLAB` for external environments.
+Clone the repository and update submodules. A submodule exists at `external/CoLLAB` for a suite of external environments.
 ```bash
 git clone <repository-url> Terrarium
 cd Terrarium
@@ -154,7 +154,7 @@ Consolidates runs and logs into a static dashboard for easier navigation:
 
 ## Tooling (MCP Servers)
 
-To standardize tool usage among different model providers, we employ an MCP server using FastMCP. Each environment has their own set of MCP tools that are readily available to the agent with the functionality of permitting certain tools by the communication protocol. Some examples of environment tools are MeetingScheduling -> schedule_meeting(.), PersonalAssistant -> choose_outfit(.), and SmartGrid -> schedule_task(.).
+To standardize tool usage among different model providers, we employ an MCP server using FastMCP. Each environment has their own set of MCP tools that are readily available to the agent with the functionality of permitting certain tools by the communication protocol. Some examples of environment tools are MeetingScheduling -> attend_meeting(.), PersonalAssistant -> choose_outfit(.), and SmartGrid -> assign_source(.).
 
 
 ## Logging

@@ -64,5 +64,5 @@ notes:
 - Final attendance decisions happen during execution using attend_meeting action
 - Meetings have fixed windows on a shared timeline; soft meetings reward overlap
 - Strict meetings reward full‑window attendance; overlaps across two meetings are penalized
-- Objective: Maximize global utility ratio from CoLLAB v2 scoring
+- Objective: Maximize global reward ratio from CoLLAB v2 scoring
 - Simulation stops when all attendance variables are assigned or max iterations reached

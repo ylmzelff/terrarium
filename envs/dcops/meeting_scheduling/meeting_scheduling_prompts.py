@@ -42,11 +42,11 @@ RULES:
 - You may only decide attendance for meetings you participate in.
 - Each meeting has a fixed window [start, end). Your interval must lie within that window.
 - Use 'skip' only if attending is impractical or low value.
-- For SOFT meetings, overlapping with others yields higher utility.
-- For STRICT meetings, attending the full window yields the best utility.
+- For SOFT meetings, overlapping with others yields higher reward.
+- For STRICT meetings, attending the full window yields the best reward.
 - Avoid overlapping attendance across two meetings that conflict in time.
 
-Your goal is to maximise the overall utility by coordinating with other agents."""
+Your goal is to maximise the overall reward by coordinating with other agents."""
 
         system_text = (self.tool_instruction_data or {}).get("system")
         if system_text:
@@ -172,4 +172,3 @@ Your goal is to maximise the overall utility by coordinating with other agents."
             )
 
         return "\n".join(context_parts)
-

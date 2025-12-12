@@ -63,5 +63,5 @@ notes:
 - Coordinate via blackboards to minimize overflow to the main grid
 - Each agent controls 2-4 machines with fixed operating windows
 - Sources have hourly capacities shared across agents
-- Objective: Maximize CoLLAB v2 global utility (minimize overflow)
+- Objective: Maximize CoLLAB v2 global reward (minimize overflow)
 - Simulation stops when all machines assigned or max iterations reached

@@ -310,7 +310,7 @@ class Agent:
 
         Args:
             agent_name: Name of the agent
-            agent_context: Agent's private context (budget, inventory, utilities)
+            agent_context: Agent's private context
             blackboard_context: Recent blackboard activity context
             prompts: Prompt manager instance
             communication_protocol: Communication protocol instance

@@ -9,7 +9,7 @@ timeline, minimising overflow to the main grid.
 """
 
 from pathlib import Path
-from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple
+from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
 
 if TYPE_CHECKING:
     from src.agent import Agent
@@ -18,14 +18,12 @@ from problem_layer.smart_grid import SmartGridConfig, generate_instance
 from problem_layer.base import ProblemDefinition
 
 from envs.abstract_environment import AbstractEnvironment
-from envs.dcops.plotter import ScorePlotter
 from src.utils import (
     clear_seed_directories,
     extract_model_info,
     get_tag_model_subdir,
     get_run_timestamp,
     build_log_dir,
-    build_plots_dir,
 )
 
 from .smartgrid_prompts import SmartGridPrompts
@@ -97,11 +95,6 @@ class SmartGridEnvironment(AbstractEnvironment):
         # Score tracking
         self.global_score_history: List[float] = []
         self.local_scores_history: Dict[str, List[float]] = {a: [] for a in self.agent_names}
-        self.score_plotter: Optional[ScorePlotter] = None
-
-        tag_model = get_tag_model_subdir(self.full_config)
-        plots_dir = build_plots_dir("SmartGrid", tag_model, self.current_seed, self.run_timestamp)
-        self.score_plotter = ScorePlotter(save_dir=str(plots_dir))
 
         # Prompts (tools are handled by MCP server)
         self.prompts = SmartGridPrompts(self, self.full_config)
@@ -163,25 +156,39 @@ class SmartGridEnvironment(AbstractEnvironment):
             context[key] = value
         return context
 
-    def _compute_scores(self) -> Tuple[float, Dict[str, float]]:
-        total_utility = 0.0
-        local_utilities: Dict[str, float] = {a: 0.0 for a in self.agent_names}
+    def joint_reward(self, actions: Mapping[str, Any]) -> float:
+        """Return the (partial) joint reward for a joint assignment."""
+        total_reward, _ = self.rewards(actions)
+        return total_reward
+
+    def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
+        """Return the reward attributed to a single agent."""
+        _, local_rewards = self.rewards(actions)
+        assert agent in local_rewards, f"Agent {agent} not found in local rewards"
+        local_reward = local_rewards.get(agent)
+        assert local_reward is not None, f"Local reward for agent {agent} is None"
+        return local_reward
+
+    def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
+        """Compute partial joint reward and per-agent rewards for a given joint assignment."""
+        total_reward = 0.0
+        local_rewards: Dict[str, float] = {a: 0.0 for a in self.agent_names}
 
         for factor in self.problem.factors:
-            if not all(v in self.assignment for v in factor.scope):
+            if not all(v in actions for v in factor.scope):
                 continue
             try:
-                utility = factor.evaluate(self.assignment)
+                reward = factor.evaluate(actions)
             except Exception:
                 continue
-            total_utility += utility
+            total_reward += reward
             owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
             if owners:
-                share = utility / len(owners)
+                share = reward / len(owners)
                 for owner in owners:
-                    local_utilities[owner] += share
+                    local_rewards[owner] += share
 
-        return total_utility, local_utilities
+        return total_reward, local_rewards
 
     def done(self, iteration: int) -> bool:
         """Return True when the environment is finished."""
@@ -193,7 +200,7 @@ class SmartGridEnvironment(AbstractEnvironment):
 
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
-            global_score, _ = self._compute_scores()
+            global_score = self.joint_reward(self.assignment)
             print(f"All machines assigned with global score: {global_score:.2f} - simulation complete")
             return True
         return False
@@ -208,7 +215,7 @@ class SmartGridEnvironment(AbstractEnvironment):
             for machine_id, source_id in sorted(self.assignment.items()):
                 print(f"  {machine_id} -> {source_id}")
 
-        global_score, local_scores = self._compute_scores()
+        global_score, local_scores = self.rewards(self.assignment)
         ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
         print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
 
@@ -246,18 +253,6 @@ class SmartGridEnvironment(AbstractEnvironment):
         with open(score_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
 
-        if self.score_plotter:
-            try:
-                self.score_plotter.plot_scores(
-                    self.global_score_history,
-                    self.local_scores_history,
-                    iteration,
-                    environment_name="SmartGrid",
-                    show=False,
-                )
-            except Exception as e:
-                print(f"Warning: Failed to generate score plot: {e}")
-
     def get_serializable_state(self) -> Dict[str, Any]:
         machines: Dict[str, Any] = {}
         for machine_id, machine in self.instance.machines.items():
@@ -294,7 +289,7 @@ class SmartGridEnvironment(AbstractEnvironment):
 
     def post_tool_execution_callback(self, state_updates: Dict[str, Any], response: Dict[str, Any]) -> None:
         if "assignment" in state_updates:
-            global_score, _ = self._compute_scores()
+            global_score = self.joint_reward(self.assignment)
             if "result" in response:
                 response["result"]["global_score"] = global_score
 
@@ -322,7 +317,7 @@ class SmartGridEnvironment(AbstractEnvironment):
                 "total_agents": len(self.agent_names),
             }
 
-        global_score, local_scores = self._compute_scores()
+        global_score, local_scores = self.rewards(self.assignment)
         return {
             "status": "complete",
             "global_score": global_score,

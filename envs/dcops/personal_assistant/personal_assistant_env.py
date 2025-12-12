@@ -9,7 +9,7 @@ The PersonalAssistant environment involves agents coordinating to select outfits
 that satisfy personal preferences and inter-agent constraints (color matching).
 """
 from pathlib import Path
-from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple
+from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
 
 # CoLLAB v2 problem-layer imports (made available via envs.dcops.__init__)
 from problem_layer.personal_assistant import PersonalAssistantConfig, generate_instance
@@ -18,14 +18,12 @@ from problem_layer.base import ProblemDefinition
 import logging
 # Import abstract environment interface and logger
 from envs.abstract_environment import AbstractEnvironment
-from envs.dcops.plotter import ScorePlotter
 from src.utils import (
     clear_seed_directories,
     extract_model_info,
     get_tag_model_subdir,
     get_run_timestamp,
     build_log_dir,
-    build_plots_dir,
 )
 from .personal_assistant_tools import PersonalAssistantTools
 from .personal_assistant_prompts import PersonalAssistantPrompts
@@ -103,7 +101,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         # Score tracking
         self.global_score_history: List[float] = []
         self.local_scores_history: Dict[str, List[float]] = {}
-        self.score_plotter: Optional[ScorePlotter] = None
         self.agent_names = list(self.problem.agents.keys())
         self.agents: List['Agent'] = [] # Set this later in main.py in case agents get different clients or settings
         self.max_possible_score = float(getattr(self.instance, "max_utility", 0.0))
@@ -114,11 +111,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
         # Initialize score tracking
         self.local_scores_history = {agent: [] for agent in self.agent_names}
-
-        # Get tag_model subdirectory
-        tag_model = get_tag_model_subdir(self.full_config)
-        plots_dir = build_plots_dir("PersonalAssistant", tag_model, self.current_seed, self.run_timestamp)
-        self.score_plotter = ScorePlotter(save_dir=str(plots_dir))
 
         print(f"PersonalAssistant environment initialized with {len(self.agent_names)} agents")
         print(f"Agents: {', '.join(self.agent_names)}")
@@ -205,10 +197,10 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             print(f"Reached max iterations ({max_iterations}) - stopping simulation")
             return True
 
-        # Stop early if all variables assigned and max utility reached
+        # Stop early if all variables assigned and max reward reached
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars and self.instance:
-            global_score, _ = self._compute_scores()
+            global_score = self.joint_reward(self.assignment)
             if self.max_possible_score and global_score >= self.max_possible_score:
                 print(
                     f"All constraints satisfied (score: {global_score}/{self.max_possible_score}) - simulation complete"
@@ -220,32 +212,45 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
         return False
 
-    def _compute_scores(self) -> Tuple[float, Dict[str, float]]:
-        """
-        Compute partial global and local utility for current assignment.
+    def joint_reward(self, actions: Mapping[str, Any]) -> float:
+        """Return the (partial) joint reward for a joint assignment."""
+        total_reward, _ = self.rewards(actions)
+        return total_reward
 
-        Factors whose full scope has been assigned contribute to the total.
-        Local utilities are attributed evenly to variable owners in scope.
+    def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
+        """Return the reward attributed to a single agent."""
+        _, local_rewards = self.rewards(actions)
+        assert agent in local_rewards, f"Agent {agent} not found in local rewards"
+        local_reward = local_rewards.get(agent)
+        assert local_reward is not None, f"Local reward for agent {agent} is None"
+        return local_reward
+
+    def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
-        total_utility = 0.0
-        local_utilities: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
+        Compute partial joint reward and per-agent rewards for a given joint assignment.
+
+        Factors whose full scope has been assigned contribute to the total reward.
+        Per-agent rewards are attributed evenly to variable owners in scope.
+        """
+        total_reward = 0.0
+        local_rewards: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
 
         for factor in self.problem.factors:
-            if not all(var in self.assignment for var in factor.scope):
+            if not all(var in actions for var in factor.scope):
                 continue
             try:
-                utility = factor.evaluate(self.assignment)
+                reward = factor.evaluate(actions)
             except Exception:
                 continue
-            total_utility += utility
+            total_reward += reward
 
             owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
             if owners:
-                share = utility / len(owners)
+                share = reward / len(owners)
                 for owner in owners:
-                    local_utilities[owner] += share
+                    local_rewards[owner] += share
 
-        return total_utility, local_utilities
+        return total_reward, local_rewards
 
     def log_state(self, iteration: int, phase: str) -> None:
         """
@@ -267,15 +272,15 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         if remaining:
             print(f"Remaining agents: {', '.join(remaining)}")
 
-        global_score, local_scores = self._compute_scores()
+        global_score, local_scores = self.rewards(self.assignment)
         ratio = global_score / self.max_possible_score if self.max_possible_score else 0.0
         print(f"Current Global Score: {global_score:.2f} (ratio {ratio:.2%})")
 
-        # Track scores and generate plots for every iteration
+        # Track scores for every iteration
         self._track_scores(iteration, global_score, local_scores)
 
     def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
-        """Track scores and generate plots/logs."""
+        """Track scores and write logs."""
         import json
         from datetime import datetime
 
@@ -312,19 +317,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         score_file = log_dir / f"scores_iteration_{iteration}.json"
         with open(score_file, 'w') as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
-
-        # Generate plot
-        if self.score_plotter:
-            try:
-                plot_path = self.score_plotter.plot_scores(
-                    self.global_score_history,
-                    self.local_scores_history,
-                    iteration,
-                    environment_name="PersonalAssistant",
-                    show=False
-                )
-            except Exception as e:
-                print(f"Warning: Failed to generate score plot: {e}")
 
     def get_serializable_state(self) -> Dict[str, Any]:
         """
@@ -402,7 +394,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             response: The response dictionary to potentially modify
         """
         if "outfit_selections" in state_updates:
-            global_score, _ = self._compute_scores()
+            global_score = self.joint_reward(self.assignment)
             if "result" in response:
                 response["result"]["global_score"] = global_score
                 response["result"]["max_possible_score"] = self.max_possible_score
@@ -464,7 +456,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
                 "total_agents": len(self.agent_names),
             }
 
-        global_score, local_scores = self._compute_scores()
+        global_score, local_scores = self.rewards(self.assignment)
 
         return {
             "status": "complete",

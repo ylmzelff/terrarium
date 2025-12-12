@@ -13,8 +13,6 @@ from envs.abstract_environment import AbstractEnvironment
 from .store import Store
 from .agent import Agent, create_agent_pool, create_agents_with_names
 from .trade import TradeManager
-from envs.negotiation.plotter import UtilityPlotter
-from envs.dcops.plotter import ScorePlotter
 from src.logger import BlackboardLogger, PromptLogger
 from src.utils import (
     clear_seed_directories,
@@ -22,7 +20,6 @@ from src.utils import (
     get_tag_model_subdir,
     get_run_timestamp,
     build_log_dir,
-    build_plots_dir,
 )
 from .prompts.user_prompt import generate_user_prompt
 
@@ -56,7 +53,6 @@ class TradingGameEnvironment(AbstractEnvironment):
         self.blackboard_logger = None
         self.utility_history = {}
         self.budget_history = {}
-        self.plotter = None
 
         # Factor graph support
         self._factor_graph_blackboards = []
@@ -158,17 +154,9 @@ class TradingGameEnvironment(AbstractEnvironment):
         self.utility_history = {agent.name: [] for agent in self.agents}
         self.budget_history = {agent.name: [] for agent in self.agents}
 
-        # Setup seed-based directory structure for plots
-        # Get tag_model subdirectory
-        tag_model = get_tag_model_subdir(self.full_config)
-        plots_dir = build_plots_dir("Trading", tag_model, self.seed, self.run_timestamp)
-        plots_dir_str = str(plots_dir)
-        self.plotter = UtilityPlotter(save_dir=plots_dir_str)
-
         # Initialize score tracking for JSON logging (similar to other environments)
         self.global_score_history: List[float] = []
         self.local_scores_history: Dict[str, List[float]] = {agent.name: [] for agent in self.agents}
-        self.score_plotter = ScorePlotter(save_dir=plots_dir_str)
 
         # Record initial utilities and budgets (before any trading)
         for agent in self.agents:
@@ -806,16 +794,6 @@ class TradingGameEnvironment(AbstractEnvironment):
                 self.utility_history[agent.name].append(agent.state.current_utility)
                 self.budget_history[agent.name].append(agent.state.budget)
 
-            # Generate utility plot
-            if self.plotter:
-                plot_path = self.plotter.plot_utilities(
-                    self.utility_history,
-                    iteration,
-                    budget_history=self.budget_history,
-                    show=False
-                )
-                print(f"  📊 Utility plot saved: {plot_path}")
-
             # Calculate and track scores like other environments
             global_score = sum(agent.state.current_utility for agent in self.agents)
             local_scores = {agent.name: float(agent.state.current_utility) for agent in self.agents}
@@ -824,7 +802,7 @@ class TradingGameEnvironment(AbstractEnvironment):
             self._track_scores(iteration, global_score, local_scores)
 
     def _track_scores(self, iteration: int, global_score: float, local_scores: Dict[str, float]) -> None:
-        """Track scores and generate plots/logs similar to other environments."""
+        """Track scores and write logs similar to other environments."""
         import json
         from datetime import datetime
         from pathlib import Path
@@ -859,19 +837,6 @@ class TradingGameEnvironment(AbstractEnvironment):
         score_file = log_dir / f"scores_iteration_{iteration}.json"
         with open(score_file, 'w') as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
-
-        # Generate score plot using ScorePlotter
-        if self.score_plotter:
-            try:
-                plot_path = self.score_plotter.plot_scores(
-                    self.global_score_history,
-                    self.local_scores_history,
-                    iteration,
-                    environment_name="Trading",
-                    show=False
-                )
-            except Exception as e:
-                print(f"Warning: Failed to generate score plot: {e}")
 
     def _log_initial_state(self):
         """Log initial trading game state."""
@@ -996,18 +961,6 @@ class TradingGameEnvironment(AbstractEnvironment):
     def cleanup(self, iteration: int) -> None:
         """Clean up trading game resources."""
         print("Cleaning up trading game environment...")
-
-        # Generate final plots if plotter available
-        if self.plotter and self.utility_history:
-            # Get final iteration from utility history length
-            final_iteration = max(len(utils) for utils in self.utility_history.values() if utils)
-            final_plot = self.plotter.plot_utilities(
-                self.utility_history,
-                iteration=final_iteration,
-                budget_history=self.budget_history,
-                show=False
-            )
-            print(f"Final utility plot saved: {final_plot}")
 
         # Log final blackboard state
         if self.blackboard_logger and self.blackboard_manager and self._factor_graph_blackboards:
