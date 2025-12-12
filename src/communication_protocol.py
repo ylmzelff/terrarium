@@ -165,19 +165,35 @@ class CommunicationProtocol:
                     "planning_round": planning_round
                 })
 
-    async def generate_blackboard_network_from_factor(self, factor, context):
-        async with self.mcp_client as client:
-            blackboard_id = (await client.call_tool("add_blackboard", {
-                "agents": factor.agent_scope,
-                "template": None
-            })).data
+    async def generate_comm_network(self, participants, context: str, template: Optional[Dict[str, Any]] = None):
+        """
+        Create a new blackboard and seed it with an initial context message.
 
-            # Post initial context as a system message with phase metadata
-            await client.call_tool("post_system_message", {
-                "blackboard_id": blackboard_id,
-                "kind": "context",
-                "payload": {"message": context}
-            })
+        Args:
+            participants: List of agent names that can access this blackboard.
+            context: Initial context message to post as a system "context" event.
+            template: Optional blackboard template (passed through to MCP).
+        """
+        async with self.mcp_client as client:
+            blackboard_id = (
+                await client.call_tool(
+                    "add_blackboard",
+                    {
+                        "agents": list(participants),
+                        "template": template,
+                    },
+                )
+            ).data
+
+            await client.call_tool(
+                "post_system_message",
+                {
+                    "blackboard_id": blackboard_id,
+                    "kind": "context",
+                    "payload": {"message": context},
+                },
+            )
+
         return blackboard_id
 
     async def agent_execution_turn(self, agent: 'Agent', agent_name: str, agent_context, environment, iteration: int):
