@@ -228,7 +228,7 @@ class Agent:
                     )
                     total_tools_executed += tool_calls_executed
 
-                    # Add trajectory step to dict
+                    # Add trajectory step to dict for logging
                     if step_tools:
                         step_key = f"step_{step + 1}"
                         trajectory_dict[step_key] = {
