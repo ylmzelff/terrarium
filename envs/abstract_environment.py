@@ -71,18 +71,15 @@ class AbstractEnvironment(ABC):
         pass
 
     @abstractmethod
-    def should_continue_simulation(self, iteration: int) -> bool:
+    def done(self, iteration: int) -> bool:
         """
-        Check if the simulation should continue running.
+        Check if the simulation is complete.
 
         Args:
             iteration: Current iteration number
 
         Returns:
-            True if simulation should continue, False to stop
-
-        This allows the environment to implement custom stopping conditions
-        beyond the maximum iteration limit.
+            True if the simulation should stop, False to continue.
         """
         pass
 
