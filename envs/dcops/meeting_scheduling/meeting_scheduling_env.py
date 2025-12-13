@@ -9,11 +9,11 @@ the updated CoLLAB benchmark.
 """
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
-import logging
 # CoLLAB v2 problem-layer imports (made available via envs.dcops.__init__)
 from problem_layer.meeting_scheduling import MeetingSchedulingConfig, generate_instance
 from problem_layer.base import ProblemDefinition
 
+import logging
 logger = logging.getLogger(__name__)
 
 # Use TYPE_CHECKING to avoid circular import (Agent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → Agent)
@@ -58,7 +58,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.max_iterations = self.simulation_config.get("max_iterations", None)
         self.max_planning_rounds = self.simulation_config.get("max_planning_rounds", None)        
         # Clear seed directories FIRST to ensure clean state for this run
-        clear_seed_directories("MeetingScheduling", self.current_seed, self.full_config)
+        clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance -------------------------------------------------
         num_agents = self.config.get("num_agents", self.config.get("n_agents", 8))
@@ -103,10 +103,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Initialize score tracking
         self.agent_rewards_history: Dict[str, List[float]] = {agent: [] for agent in self.agent_names}
 
-        logger.info("MeetingScheduling environment initialized with %s agents", len(self.agent_names))
-        logger.info("Agents: %s", ", ".join(self.agent_names))
-        logger.info("Total meetings: %s", len(self.instance.meetings))
-        logger.info("MeetingSchedulingEnvironment initialized")
+        logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
+        logger.info("Agent Names: %s", ", ".join(self.agent_names))
+        logger.info("Total meetings to schedule: %s", len(self.instance.meetings))
 
     async def async_init(self):
         await self.create_comm_network()
@@ -280,7 +279,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         Args:
             iteration: Current iteration number
         """
-        logger.info("=== MeetingScheduling State - Iteration %s ===", iteration)
+        logger.info("=== %s State - Iteration %s ===", self.__class__.__name__, iteration)
         total_vars = len(self.problem.variables)
         logger.info("Variables: %s total, %s assigned", total_vars, len(self.assignment))
 
@@ -310,12 +309,12 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Create logs directory with seed subdirectory
         # Get tag_model subdirectory
         tag_model = get_tag_model_subdir(self.full_config)
-        log_dir = build_log_dir("MeetingScheduling", tag_model, self.current_seed, self.run_timestamp)
+        log_dir = build_log_dir(self.__class__.__name__, tag_model, self.current_seed, self.run_timestamp)
         log_dir.mkdir(parents=True, exist_ok=True)
 
         # Log scores to JSON
         score_entry = {
-            "environment": "MeetingScheduling",
+            "environment": self.__class__.__name__,
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
             "joint_reward": joint_reward,

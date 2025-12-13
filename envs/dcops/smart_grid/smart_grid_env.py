@@ -59,7 +59,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         self.action_logging_config = ["assign_source"]
 
         # Clear seed directories FIRST to ensure clean state for this run
-        clear_seed_directories("SmartGrid", self.current_seed, self.full_config)
+        clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance ---------------------------------------------
         num_agents = self.config.get("num_agents", self.config.get("n_homes", 6))
@@ -103,8 +103,8 @@ class SmartGridEnvironment(AbstractEnvironment):
         # Prompts (tools are handled by MCP server)
         self.prompts = SmartGridPrompts(self, self.full_config)
 
-        logger.info("SmartGrid environment initialized with %s agents", len(self.agent_names))
-        logger.info("Agents: %s", ", ".join(self.agent_names))
+        logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
+        logger.info("Agent Names: %s", ", ".join(self.agent_names))
         logger.info("Total machines: %s", len(self.problem.variables))
         logger.info("Timeline length: %s slots", self.instance.timeline_length)
 
@@ -134,7 +134,7 @@ class SmartGridEnvironment(AbstractEnvironment):
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         if phase == "planning" and iteration > 1 and self.assignment:
-            logger.info("SmartGrid: Clearing assignments for iteration %s", iteration)
+            logger.info("%s: Clearing assignments for iteration %s", self.__class__.__name__, iteration)
             self.assignment = {}
 
         agent_vars = [var.name for var in self.problem.agent_variables(agent_name)]
@@ -214,7 +214,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         return float(getattr(self.instance, "max_utility", 0.0))
 
     def log_iteration(self, iteration: int) -> None:
-        logger.info("=== SmartGrid State - Iteration %s ===", iteration)
+        logger.info("=== %s State - Iteration %s ===", self.__class__.__name__, iteration)
         total_vars = len(self.problem.variables)
         logger.info("Machines: %s total, %s assigned", total_vars, len(self.assignment))
 
@@ -238,11 +238,11 @@ class SmartGridEnvironment(AbstractEnvironment):
             self.agent_rewards_history.setdefault(agent, []).append(reward)
 
         tag_model = get_tag_model_subdir(self.full_config)
-        log_dir = build_log_dir("SmartGrid", tag_model, self.current_seed, self.run_timestamp)
+        log_dir = build_log_dir(self.__class__.__name__, tag_model, self.current_seed, self.run_timestamp)
         log_dir.mkdir(parents=True, exist_ok=True)
 
         score_entry = {
-            "environment": "SmartGrid",
+            "environment": self.__class__.__name__,
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
             "joint_reward": joint_reward,

@@ -75,7 +75,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         # Initialize environment-specific tools on the MCP server
         async with mcp_client as client:
             result = await client.call_tool("initialize_environment_tools", {"environment_name": environment_name})
-            logging.info(f"MCP server environment tools: {result.data}")
+            logging.info(f"MCP server environment tools initialization: {result.data}")
 
         # Reset tool call log for new simulation
         environment.tool_logger.reset_log()

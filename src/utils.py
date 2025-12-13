@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Union, Any, Dict, List, Optional
 import re
 
+import logging
+
+from envs.abstract_environment import AbstractEnvironment
+logger = logging.getLogger(__name__)
 
 def load_config(config_file) -> Dict[str, Any]:
     """
@@ -362,14 +366,6 @@ def build_log_dir(environment_name: str, tag_model: str,
 
     return _build_run_directory("logs", environment_name, tag_model, seed, run_timestamp)
 
-
-def build_plots_dir(environment_name: str, tag_model: str,
-                    seed: Union[int, str], run_timestamp: Optional[str] = None) -> Path:
-    """Build the filesystem path for plot artifacts."""
-
-    return _build_run_directory("plots", environment_name, tag_model, seed, run_timestamp)
-
-
 def clear_seed_directories(environment_name: str, seed: Union[int, str], full_config: Dict[str, Any]) -> None:
     """
     Clear existing seed directories for both logs and plots to ensure clean state.
@@ -382,19 +378,11 @@ def clear_seed_directories(environment_name: str, seed: Union[int, str], full_co
     # Get tag_model subdirectory
     tag_model = get_tag_model_subdir(full_config)
 
-    # Clear plots directory for this seed
-    run_timestamp = get_run_timestamp(full_config)
-
-    plots_seed_dir = build_plots_dir(environment_name, tag_model, seed, run_timestamp)
-    if plots_seed_dir.exists():
-        shutil.rmtree(plots_seed_dir)
-        print(f"Cleared plots directory: {plots_seed_dir}")
-
     # Clear logs directory for this seed
     logs_seed_dir = Path(f"logs/{environment_name}/{tag_model}/seed_{seed}")
     if logs_seed_dir.exists():
         shutil.rmtree(logs_seed_dir)
-        print(f"Cleared logs directory: {logs_seed_dir}")
+        logger.warning(f"Cleared logs directory: {logs_seed_dir}")
 
 
 def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str] = None, vllm_runtime: Any = None):
@@ -433,7 +421,7 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, vllm")
 
 
-def create_environment(protocol, environment_name: str, config, tool_logger):
+def create_environment(protocol, environment_name: str, config, tool_logger) -> AbstractEnvironment:
     """
     Create environment instance based on name.
 
@@ -514,9 +502,8 @@ def handle_mcp_connection_error(exc: Exception, url: str = "http://localhost:800
     message = str(exc)
     connection_error = "Client failed to connect" in message or "All connection attempts failed" in message
     if connection_error:
-        print(
-            f"Simulation aborted: could not connect to the MCP server at {url}.\n"
-            "Start it in another terminal with `python src/server.py` and retry."
+        logger.error(
+            f"Simulation aborted: could not connect to the MCP server at {url}. Start it in another terminal with `python src/server.py` and retry."
         )
         return True
     return False

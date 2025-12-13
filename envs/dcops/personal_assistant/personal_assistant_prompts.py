@@ -13,7 +13,7 @@ class PersonalAssistantPrompts:
     """
 
     def __init__(self, env: AbstractEnvironment, full_config: Dict[str, Any]):
-        self.prompt_logger = PromptLogger("PersonalAssistant", env.current_seed, full_config)
+        self.prompt_logger = PromptLogger(env.__class__.__name__, env.current_seed, full_config)
         self.prompt_logger.reset_log()
         self.env = env
         self.tool_instruction_data = build_vllm_tool_instructions(
@@ -140,4 +140,3 @@ Your goal is to maximise joint satisfaction and coordination."""
             )
 
         return "\n".join(context_parts)
-

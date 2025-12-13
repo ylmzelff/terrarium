@@ -15,7 +15,7 @@ class SmartGridPrompts:
     def __init__(self, env: AbstractEnvironment, full_config: Dict[str, Any]):
         self.env = env
         self.full_config = full_config
-        self.prompt_logger = PromptLogger("SmartGrid", env.current_seed, full_config)
+        self.prompt_logger = PromptLogger(env.__class__.__name__, env.current_seed, full_config)
         self.prompt_logger.reset_log()
 
         self.tool_instruction_data = build_vllm_tool_instructions(
@@ -143,4 +143,3 @@ Your goal is to minimise total overflow while keeping assignments coordinated.""
             )
 
         return "\n".join(parts)
-
