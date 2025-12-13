@@ -3,7 +3,6 @@ Main script to run a base/vanilla simulation
 """
 # Add project root to path so we can import modules
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -15,12 +14,14 @@ sys.path.insert(0, str(project_root))
 import argparse
 from typing import Any, Dict
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 from datetime import datetime
 import traceback
 
 from src.communication_protocol import CommunicationProtocol
 from src.agent_factory import build_agents
 from src.utils import (
+    configure_logging,
     load_config,
     create_environment,
     get_model_name,
@@ -119,28 +120,29 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         max_iterations = config["simulation"].get("max_iterations", 1)
         max_planning_rounds = config["simulation"].get("max_planning_rounds", 1)
         try:
-            # Main iteration
-            for iteration in tqdm(range(1, max_iterations + 1), desc="Iterations", position=0, leave=True, ncols=80):
-                current_iteration = iteration
-                if environment.done(current_iteration):
-                    logging.info(f"Environment requested simulation stop at iteration {current_iteration}")
-                    break
-                # Planning Phase
-                for planning_round in tqdm(range(1, max_planning_rounds + 1), desc="  Planning", position=1, leave=False, ncols=80):
-                    # Use consistent agent order for this iteration
-                    for agent in tqdm(environment.agents, desc="       Agents", position=2, leave=False, ncols=80):
-                        agent_context = environment.build_agent_context(agent.name, phase="planning", iteration=iteration, planning_round=planning_round)
-                        await communication_protocol.agent_planning_turn(agent, agent.name, agent_context, environment, iteration, planning_round)
+            with logging_redirect_tqdm():
+                # Main iteration
+                for iteration in tqdm(range(1, max_iterations + 1), desc="Iterations", position=0, leave=True, ncols=80):
+                    current_iteration = iteration
+                    if environment.done(current_iteration):
+                        logging.info(f"Environment requested simulation stop at iteration {current_iteration}")
+                        break
+                    # Planning Phase
+                    for planning_round in tqdm(range(1, max_planning_rounds + 1), desc="  Planning", position=1, leave=False, ncols=80):
+                        # Use consistent agent order for this iteration
+                        for agent in tqdm(environment.agents, desc="       Agents", position=2, leave=False, ncols=80):
+                            agent_context = environment.build_agent_context(agent.name, phase="planning", iteration=iteration, planning_round=planning_round)
+                            await communication_protocol.agent_planning_turn(agent, agent.name, agent_context, environment, iteration, planning_round)
 
-                # Execution Phase
-                with tqdm(total=1, desc="  Execution", position=1, leave=False, ncols=80) as pbar:
-                    for agent in tqdm(environment.agents, desc="       Agents", position=2, leave=False, ncols=80):
-                        agent_context = environment.build_agent_context(agent.name, phase="execution", iteration=iteration)
-                        await communication_protocol.agent_execution_turn(agent, agent.name, agent_context, environment, iteration)
-                    pbar.update(1)
+                    # Execution Phase
+                    with tqdm(total=1, desc="  Execution", position=1, leave=False, ncols=80) as pbar:
+                        for agent in tqdm(environment.agents, desc="       Agents", position=2, leave=False, ncols=80):
+                            agent_context = environment.build_agent_context(agent.name, phase="execution", iteration=iteration)
+                            await communication_protocol.agent_execution_turn(agent, agent.name, agent_context, environment, iteration)
+                        pbar.update(1)
 
-                environment.log_iteration_summary(current_iteration)
-            environment.generate_final_summary()
+                    environment.log_iteration_summary(current_iteration)
+                environment.generate_final_summary()
         finally:
             if provider == "vllm" and vllm_runtime:
                 vllm_runtime.shutdown()
@@ -156,15 +158,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         return False
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=getattr(logging, os.getenv("TERRARIUM_LOG_LEVEL", "INFO").upper(), logging.INFO),
-        # format="[%(levelname)s] %(name)s: %(message)s",
-        format="[%(levelname)s]: %(message)s",
-        force=True,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
+    configure_logging()
     # Load API keys and other environment variables from .env file
     load_dotenv()
     # Parse command-line arguments

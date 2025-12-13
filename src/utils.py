@@ -520,3 +520,40 @@ def handle_mcp_connection_error(exc: Exception, url: str = "http://localhost:800
         )
         return True
     return False
+
+
+def configure_logging(level: Optional[int] = None) -> None:
+    import logging
+    import os
+    import sys
+
+    if level is None:
+        level = getattr(logging, os.getenv("TERRARIUM_LOG_LEVEL", "INFO").upper(), logging.INFO)
+
+    if sys.stderr.isatty():
+        colors = {
+            logging.DEBUG: "\033[36m",
+            logging.INFO: "\033[32m",
+            logging.WARNING: "\033[33m",
+            logging.ERROR: "\033[31m",
+            logging.CRITICAL: "\033[1;31m",
+        }
+        reset = "\033[0m"
+
+        class _ColorFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+                record.log_color = colors.get(record.levelno, "")
+                record.reset = reset
+                return super().format(record)
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            _ColorFormatter("%(log_color)s%(levelname)-8s%(reset)s | %(log_color)s%(message)s%(reset)s")
+        )
+        logging.basicConfig(level=level, handlers=[handler], force=True)
+    else:
+        logging.basicConfig(level=level, format="[%(levelname)s]: %(message)s", force=True)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)

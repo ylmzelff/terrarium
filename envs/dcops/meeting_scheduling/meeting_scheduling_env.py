@@ -94,7 +94,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Score tracking
         self.joint_reward_history: List[float] = []
         self.agent_names = list(self.problem.agents.keys())
-        self.max_joint_reward = float(getattr(self.instance, "max_utility", 0.0))
+        self.max_joint_reward = self.compute_max_joint_reward()
         self.agents: List['Agent'] = []
 
         # Initialize prompts (Put this after all other instance variables)
@@ -226,8 +226,11 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 joint_reward,
             )
             return True
-
         return False
+    
+    def compute_max_joint_reward(self) -> float:
+        """Return the optimal joint reward for the environment."""
+        return float(getattr(self.instance, "max_utility", 0.0))
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
         """Return the joint reward for a joint assignment."""
@@ -316,16 +319,15 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "iteration": iteration,
             "timestamp": datetime.now().isoformat(),
             "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward,
+            "max_joint_reward": self.max_joint_reward,
             "agent_rewards": agent_rewards,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards),
             "model_info": extract_model_info(self.full_config),
             "full_config": self.full_config,
-            "metadata": {
-                "total_agents": len(agent_rewards),
-                "variables_assigned": len(self.assignment),
-                "total_variables": len(self.problem.variables),
-                "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
-            },
+            "total_agents": len(agent_rewards),
+            "variables_assigned": len(self.assignment),
+            "total_variables": len(self.problem.variables),
         }
 
         score_file = log_dir / f"scores_iteration_{iteration}.json"
