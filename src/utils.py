@@ -8,13 +8,15 @@ and components of the multi-agent communication protocol system.
 import shutil
 import yaml
 from pathlib import Path
-from typing import Union, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Union, Any, Dict, List, Optional
 import re
 
 import logging
 
-from envs.abstract_environment import AbstractEnvironment
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from envs.abstract_environment import AbstractEnvironment
 
 def load_config(config_file) -> Dict[str, Any]:
     """
@@ -421,7 +423,7 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, vllm")
 
 
-def create_environment(protocol, environment_name: str, config, tool_logger) -> AbstractEnvironment:
+def create_environment(protocol, environment_name: str, config, tool_logger) -> "AbstractEnvironment":
     """
     Create environment instance based on name.
 
