@@ -825,8 +825,8 @@ class TradingGameEnvironment(AbstractEnvironment):
             }
         }
 
-        score_file = log_dir / f"scores_iteration_{iteration}.json"
-        with open(score_file, 'w') as f:
+        data_file = log_dir / f"data_iteration_{iteration}.json"
+        with open(data_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
 
     def _log_initial_state(self):

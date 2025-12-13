@@ -330,8 +330,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "total_variables": len(self.problem.variables),
         }
 
-        score_file = log_dir / f"scores_iteration_{iteration}.json"
-        with open(score_file, 'w') as f:
+        data_file = log_dir / f"data_iteration_{iteration}.json"
+        with open(data_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
 
     def get_serializable_state(self) -> Dict[str, Any]:
