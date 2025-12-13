@@ -63,7 +63,7 @@ python src/server.py
 ```
 2. Run a simulation using an execution script along with a config file:
 ```bash
-python examples/base/main.py --config <yaml_config_path>
+python examples/base_main.py --config <yaml_config_path>
 ```
 
 ## Attack Scenarios
@@ -72,9 +72,9 @@ Terrarium ships three reference attacks that exercise different points in the st
 
 | Attack | What it targets | Entry point | Payload config |
 | --- | --- | --- | --- |
-| Agent poisoning | Replaces every `post_message` payload from the compromised agent before it reaches the blackboard. | `examples/attacks/main.py --attack_type agent_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
-| Context overflow | Appends a large filler block to agent messages to force downstream context truncation. | `examples/attacks/main.py --attack_type context_overflow` | `examples/configs/attack_config.yaml` (`header`, `filler_token`, `repeat`, `max_chars`) |
-| Communication protocol poisoning | Injects malicious system messages into every blackboard via the MCP layer. | `examples/attacks/main.py --communication_protocol_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
+| Agent poisoning | Replaces every `post_message` payload from the compromised agent before it reaches the blackboard. | `examples/attack_main.py --attack_type agent_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
+| Context overflow | Appends a large filler block to agent messages to force downstream context truncation. | `examples/attack_main.py --attack_type context_overflow` | `examples/configs/attack_config.yaml` (`header`, `filler_token`, `repeat`, `max_chars`) |
+| Communication protocol poisoning | Injects malicious system messages into every blackboard via the MCP layer. | `examples/attack_main.py --communication_protocol_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
 
 ### Running agent-side attacks
 
@@ -82,13 +82,13 @@ Use the unified driver to launch both the standard run and the selected attack:
 
 ```bash
 # Agent poisoning example
-python examples/attacks/main.py \
+python examples/attack_main.py \
   --config examples/configs/meeting_scheduling.yaml \
   --poison_payload examples/configs/attack_config.yaml \
   --attack_type agent_poisoning
 
 # Context overflow example
-python examples/attacks/main.py \
+python examples/attack_main.py \
   --config examples/configs/meeting_scheduling.yaml \
   --poison_payload examples/configs/attack_config.yaml \
   --attack_type context_overflow

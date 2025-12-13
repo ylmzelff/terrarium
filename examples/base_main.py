@@ -1,13 +1,13 @@
 """
-Main script to run a base agent
+Main script to run a base/vanilla simulation
 """
 # Add project root to path so we can import modules
 import logging
 import sys
 from pathlib import Path
 
-# Add project root to sys.path
-project_root = Path(__file__).parent.parent.parent
+# Add project root to sys.path BEFORE importing local modules
+project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
 # Import our modules
@@ -18,10 +18,8 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from datetime import datetime
 import traceback
 
-from src.agent import Agent
-from src.agent_factory import build_agents
 from src.communication_protocol import CommunicationProtocol
-from src.logger import ToolCallLogger, AgentTrajectoryLogger
+from src.agent_factory import build_agents
 from src.utils import (
     configure_logging,
     load_config,
@@ -33,18 +31,17 @@ from src.utils import (
 )
 import asyncio
 from fastmcp import Client
-from attack_module.attack_modules import AgentPoisoningAttack, CommunicationProtocolPoisoningAttack, ContextOverflowAttack
-
 from requests.exceptions import ConnectionError
+from src.logger import ToolCallLogger, AgentTrajectoryLogger
 from dotenv import load_dotenv
 
+# Run src.server.py to initialzie MCP server before running main.py
 try:
     mcp_client = Client("http://localhost:8000/mcp")
 except ConnectionError as exc:
     raise RuntimeError(
         "MCP server is not running. Start it with `python src/server.py` before retrying."
     ) from exc
-
 
 async def run_simulation(config: Dict[str, Any]) -> bool:
     """
@@ -63,9 +60,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         if not run_timestamp:
             run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             config.setdefault("simulation", {})["run_timestamp"] = run_timestamp
-        print(f"\n{'='*60}")
-        print(f"SIMULATION - SEED: {seed}")
-        print(f"{'='*60}")
+        logging.info(f"SIMULATION - SEED: {seed}")
 
         # Initialize environment
         environment_name = config["environment"]["name"]
@@ -80,7 +75,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         # Initialize environment-specific tools on the MCP server
         async with mcp_client as client:
             result = await client.call_tool("initialize_environment_tools", {"environment_name": environment_name})
-            print(f"MCP server environment tools: {result.data}")
+            logging.info(f"MCP server environment tools initialization: {result.data}")
 
         # Reset tool call log for new simulation
         environment.tool_logger.reset_log()
@@ -101,46 +96,10 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         else:
             model_name = get_model_name(provider, llm_config)
         log_suffix = f" (server logs: {log_path})" if log_path else ""
-        print(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
+        logging.info(f"Using provider: {provider_label}, model: {model_name}{log_suffix}")
         generation_params = get_generation_params(llm_config)
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
-
-        def make_agent(client, name: str, agent_model_name: str):
-            if args.attack_type == "agent_poisoning":
-                return AgentPoisoningAttack(
-                    client,
-                    name,
-                    agent_model_name,
-                    max_conversation_steps,
-                    tool_logger,
-                    trajectory_logger,
-                    environment_name,
-                    args.poison_payload,
-                    generation_params=generation_params,
-                )
-            if args.attack_type == "context_overflow":
-                return ContextOverflowAttack(
-                    client,
-                    name,
-                    agent_model_name,
-                    max_conversation_steps,
-                    tool_logger,
-                    trajectory_logger,
-                    environment_name,
-                    args.poison_payload,
-                    generation_params=generation_params,
-                )
-            return Agent(
-                client,
-                name,
-                agent_model_name,
-                max_conversation_steps,
-                tool_logger,
-                trajectory_logger,
-                environment_name,
-                generation_params=generation_params,
-            )
 
         agents = build_agents(
             agent_names,
@@ -151,16 +110,12 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             max_conversation_steps=max_conversation_steps,
             tool_logger=tool_logger,
             trajectory_logger=trajectory_logger,
-            environment_name=environment_name,
+            environment_name=environment_name,  # enables tool discovery
             generation_params=generation_params,
             vllm_runtime=vllm_runtime if provider == "vllm" else None,
-            make_agent=make_agent,
-            log_fn=print,
+            log_fn=logging.info,
         )
         environment.set_agent_clients(agents)
-
-        if args.attack_type == "communication_protocol_poisoning":
-            protocol_attack = CommunicationProtocolPoisoningAttack(args.poison_payload)
 
         max_iterations = config["simulation"].get("max_iterations", 1)
         max_planning_rounds = config["simulation"].get("max_planning_rounds", 1)
@@ -172,7 +127,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
                     if environment.done(current_iteration):
                         logging.info(f"Environment requested simulation stop at iteration {current_iteration}")
                         break
-
                     # Planning Phase
                     for planning_round in tqdm(range(1, max_planning_rounds + 1), desc="  Planning", position=1, leave=False, ncols=80):
                         # Use consistent agent order for this iteration
@@ -193,7 +147,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             if provider == "vllm" and vllm_runtime:
                 vllm_runtime.shutdown()
 
-        print(f"\nSimulation completed successfully")
         return True
 
     except Exception as e:
@@ -211,14 +164,12 @@ if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Run a multi-agent simulation")
     parser.add_argument("--config", type=str)
-    parser.add_argument("--poison_payload", type=str)
-    parser.add_argument("--attack_type", type=str)
     parser.add_argument("--note", type=str, default=None,
                         help="Optional experiment note to record alongside logs")
+
     args = parser.parse_args()
     config = load_config(args.config)
     if args.note:
         config.setdefault("simulation", {})["note"] = args.note
-
     # For running a single simulation
     asyncio.run(run_simulation(config))
