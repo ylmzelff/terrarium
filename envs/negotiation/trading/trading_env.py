@@ -42,7 +42,7 @@ class TradingGameEnvironment(AbstractEnvironment):
         self.action_logging_config = ["buy", "trade", "approve_trade", "reject_trade"]
 
         # Core components - initialized in initialize()
-        self.config = None
+        self.env_config = None
         self.store = None
         self.agents = []
         self.agents_dict = {}
@@ -66,12 +66,12 @@ class TradingGameEnvironment(AbstractEnvironment):
             blackboard_manager: Blackboard manager for posting events
         """
         self.full_config = config
-        self.config = config["environment"]  # Extract environment-specific config
+        self.env_config = config["environment"]  # Extract environment-specific config
         self.blackboard_manager = blackboard_manager
         self.run_timestamp = get_run_timestamp(self.full_config)
 
         # Extract and store seed for reproducibility
-        self.seed = self.full_config.get("_current_seed", self.config.get("rng_seed", 42))
+        self.seed = self.full_config.get("_current_seed", self.env_config.get("rng_seed", 42))
 
         # Initialize store with seed for reproducible inventory
         self.store = Store(seed=self.seed)
@@ -83,9 +83,9 @@ class TradingGameEnvironment(AbstractEnvironment):
         items_list = list(self.store.item_prices.keys())
 
         # Create agents and generate random blackboards for trading coordination
-        min_budget = self.config.get("min_budget", 25)
-        max_budget = self.config.get("max_budget", 25)
-        num_agents = self.config.get("num_agents", 4)
+        min_budget = self.env_config.get("min_budget", 25)
+        max_budget = self.env_config.get("max_budget", 25)
+        num_agents = self.env_config.get("num_agents", 4)
 
         # Create agents first
         self.agents = create_agent_pool(
@@ -176,7 +176,7 @@ class TradingGameEnvironment(AbstractEnvironment):
     def _load_system_prompt(self) -> str:
         """Load system prompt for agents from file with validation."""
         # Get prompt path from config
-        prompt_path = self.config.get("system_prompt_path", "src/trading/prompts/system_prompt.txt") if self.config else "src/trading/prompts/system_prompt.txt"
+        prompt_path = self.env_config.get("system_prompt_path", "src/trading/prompts/system_prompt.txt") if self.env_config else "src/trading/prompts/system_prompt.txt"
 
         # Convert to absolute path relative to the project root directory
         if not os.path.isabs(prompt_path):
@@ -585,9 +585,9 @@ class TradingGameEnvironment(AbstractEnvironment):
             agent_context["affordable_store_items"] = affordable_items[:10]
 
         # Add game structure information
-        assert self.config is not None, "Config not available"
-        agent_context["max_iterations"] = self.config.get("max_iterations", 3)
-        agent_context["max_planning_rounds"] = self.config.get("max_planning_rounds", 5)
+        assert self.env_config is not None, "Config not available"
+        agent_context["max_iterations"] = self.env_config.get("max_iterations", 3)
+        agent_context["max_planning_rounds"] = self.env_config.get("max_planning_rounds", 5)
 
         return agent_context
 
@@ -776,8 +776,8 @@ class TradingGameEnvironment(AbstractEnvironment):
 
     def done(self, iteration: int) -> bool:
         """Return True when the environment is finished."""
-        assert self.config is not None, "Config not available"
-        max_iterations = self.config.get("max_iterations", 3)
+        assert self.env_config is not None, "Config not available"
+        max_iterations = self.env_config.get("max_iterations", 3)
         return iteration > max_iterations
 
     def log_iteration(self, iteration: int) -> None:

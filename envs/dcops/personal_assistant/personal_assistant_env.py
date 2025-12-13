@@ -46,9 +46,10 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
     def __init__(self, communication_protocol, config, tool_logger):
         """Initialize the PersonalAssistant environment."""
         self.full_config = config
-        self.config: Dict[str, Any] = config["environment"]
+        self.env_config: Dict[str, Any] = config["environment"]
+        self.simulation_config = config["simulation"]
         # Get the correct seed from environment config
-        self.current_seed = self.config.get("rng_seed", 42)
+        self.current_seed = self.env_config.get("rng_seed", 42)
 
         # Instance management
         # Partial joint assignment: variable_name -> chosen outfit number (1-based)
@@ -60,7 +61,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.communication_protocol.environment = self
         self.run_timestamp = get_run_timestamp(self.full_config)
         self.current_iteration = 0
-        self.simulation_config = config["simulation"]
         self.max_iterations = self.simulation_config.get("max_iterations", None)
         self.max_planning_rounds = self.simulation_config.get("max_planning_rounds", None)
 
@@ -68,13 +68,13 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance -------------------------------------------------
-        num_agents = self.config.get("num_agents", self.config.get("n_agents", 3))
-        min_outfits = self.config.get("min_outfits_per_agent", 4)
-        max_outfits = self.config.get("max_outfits_per_agent", 6)
-        density = self.config.get("density")
+        num_agents = self.env_config.get("num_agents", self.env_config.get("n_agents", 3))
+        min_outfits = self.env_config.get("min_outfits_per_agent", 4)
+        max_outfits = self.env_config.get("max_outfits_per_agent", 6)
+        density = self.env_config.get("density")
         if density is None:
             # Back-compat: approximate density from max_degree if present
-            max_degree = self.config.get("max_degree", 3)
+            max_degree = self.env_config.get("max_degree", 3)
             try:
                 density = float(max_degree) / max(1.0, float(num_agents) - 1.0)
             except Exception:
@@ -120,10 +120,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         """Async initialization - create communication blackboards."""
         await self.create_comm_network()
 
-    def set_agent_clients(self, agents: List['Agent']):
-        """Set the agents for the environment."""
-        self.agents = agents
-
     async def create_comm_network(self):
         """Create communication blackboards for multi‑agent coordination factors."""
         for factor in self.problem.factors:
@@ -138,10 +134,6 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             context = factor.description or "Coordination required between agents."
             blackboard_id = await self.communication_protocol.generate_comm_network(list(owners), context)
             logger.info("Created %s Blackboard %s: %s", self.__class__.__name__, blackboard_id, list(owners))
-
-    def get_agent_names(self) -> List[str]:
-        """Get list of agent names."""
-        return self.agent_names.copy()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
@@ -178,8 +170,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         }
 
         # Add configuration info (consistent with trading environment)
-        assert self.config is not None, "Config not available"
-        context["max_iterations"] = self.config.get("max_iterations", 10)
+        assert self.env_config is not None, "Config not available"
+        context["max_iterations"] = self.env_config.get("max_iterations", 1)
 
         # Add additional context from kwargs (like planning_round)
         for key, value in kwargs.items():
@@ -190,8 +182,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
     def done(self, iteration: int) -> bool:
         """Return True when the environment is finished."""
         # Check max iterations first (consistent with trading environment)
-        assert self.config is not None, "Config not available"
-        max_iterations = self.config.get("max_iterations", 10)
+        assert self.env_config is not None, "Config not available"
+        max_iterations = self.env_config.get("max_iterations", 1)
         if iteration > max_iterations:
             logger.info("Reached max iterations (%s) - stopping simulation", max_iterations)
             return True
@@ -221,18 +213,18 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
         """Return the (partial) joint reward for a joint assignment."""
-        total_reward, _ = self.rewards(actions)
+        total_reward, _ = self._rewards(actions)
         return total_reward
 
     def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
         """Return the reward attributed to a single agent."""
-        _, local_rewards = self.rewards(actions)
+        _, local_rewards = self._rewards(actions)
         assert agent in local_rewards, f"Agent {agent} not found in local rewards"
         local_reward = local_rewards.get(agent)
         assert local_reward is not None, f"Local reward for agent {agent} is None"
         return local_reward
 
-    def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
+    def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
         Compute joint reward and per-agent rewards for a given joint assignment.
 
@@ -282,7 +274,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         if remaining:
             logger.info("Remaining agents: %s", ", ".join(remaining))
 
-        joint_reward, agent_rewards = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self._rewards(self.assignment)
         ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
         logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
 
@@ -326,6 +318,39 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         data_file = log_dir / f"data_iteration_{iteration}.json"
         with open(data_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
+
+    def get_final_summary(self) -> Dict[str, Any]:
+        """Get a final summary of the entire simulation."""
+        total_vars = len(self.problem.variables)
+        final_selections = f"{len(self.outfit_selections)}/{len(self.agent_names)} agents"
+        if not self.instance or len(self.assignment) != total_vars:
+            return {
+                "status": "incomplete",
+                "variables_assigned": len(self.assignment),
+                "total_variables": total_vars,
+                "total_agents": len(self.agent_names),
+                "final_selections": final_selections,
+            }
+
+        joint_reward, agent_rewards = self._rewards(self.assignment)
+
+        return {
+            "status": "complete",
+            "joint_reward": joint_reward / self.max_joint_reward if self.max_joint_reward > 0 else 0.0,
+            "raw_joint_reward": joint_reward,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
+            "outfit_selections": {
+                agent: {"article": outfit.article, "color": outfit.color}
+                for agent, outfit in self.outfit_selections.items()
+            },
+            "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
+            "total_agents": len(self.agent_names),
+            "final_selections": final_selections,
+        }
+
+    #### MCP-specific methods ####
 
     def get_serializable_state(self) -> Dict[str, Any]:
         """
@@ -407,59 +432,3 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
             if "result" in response:
                 response["result"]["joint_reward"] = joint_reward
                 response["result"]["max_joint_reward"] = self.max_joint_reward
-
-    def generate_final_summary(self):
-        """Generate final simulation summary."""
-        logger.info("%s", "=" * 60)
-        logger.info("SIMULATION COMPLETE - FINAL SUMMARY")
-        logger.info("%s", "=" * 60)
-
-        # Get environment-specific final summary
-        final_summary = self.get_final_summary()
-
-        logger.info("Total iterations: %s", self.current_iteration)
-
-        if final_summary:
-            for key, value in final_summary.items():
-                if isinstance(value, dict):
-                    logger.info("%s:", key)
-                    for sub_key, sub_value in value.items():
-                        logger.info("  %s: %s", sub_key, sub_value)
-                else:
-                    logger.info("%s: %s", key, value)
-
-    def log_iteration_summary(self, iteration: int):
-        """Log the summary of an iteration."""
-        logger.info("--- ITERATION %s SUMMARY ---", iteration)
-        self.log_iteration(iteration)
-
-    def get_final_summary(self) -> Dict[str, Any]:
-        """Get a final summary of the entire simulation."""
-        total_vars = len(self.problem.variables)
-        final_selections = f"{len(self.outfit_selections)}/{len(self.agent_names)} agents"
-        if not self.instance or len(self.assignment) != total_vars:
-            return {
-                "status": "incomplete",
-                "variables_assigned": len(self.assignment),
-                "total_variables": total_vars,
-                "total_agents": len(self.agent_names),
-                "final_selections": final_selections,
-            }
-
-        joint_reward, agent_rewards = self.rewards(self.assignment)
-
-        return {
-            "status": "complete",
-            "joint_reward": joint_reward / self.max_joint_reward if self.max_joint_reward > 0 else 0.0,
-            "raw_joint_reward": joint_reward,
-            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
-            "agent_rewards": agent_rewards,
-            "outfit_selections": {
-                agent: {"article": outfit.article, "color": outfit.color}
-                for agent, outfit in self.outfit_selections.items()
-            },
-            "total_variables": total_vars,
-            "variables_assigned": len(self.assignment),
-            "total_agents": len(self.agent_names),
-            "final_selections": final_selections,
-        }

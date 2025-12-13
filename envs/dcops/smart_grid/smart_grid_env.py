@@ -40,7 +40,7 @@ class SmartGridEnvironment(AbstractEnvironment):
 
     def __init__(self, communication_protocol, config, tool_logger):
         self.full_config = config
-        self.config: Dict[str, Any] = config["environment"]
+        self.env_config: Dict[str, Any] = config["environment"]
         self.simulation_config: Dict[str, Any] = config["simulation"]
 
         self.communication_protocol = communication_protocol
@@ -52,7 +52,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         self.max_iterations = self.simulation_config.get("max_iterations", None)
         self.max_planning_rounds = self.simulation_config.get("max_planning_rounds", None)
 
-        self.current_seed = self.config.get("rng_seed", 42)
+        self.current_seed = self.env_config.get("rng_seed", 42)
 
         # Partial joint assignment: machine_id -> source_id
         self.assignment: Dict[str, Any] = {}
@@ -62,10 +62,10 @@ class SmartGridEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance ---------------------------------------------
-        num_agents = self.config.get("num_agents", self.config.get("n_homes", 6))
-        timeline_length = self.config.get("timeline_length", self.config.get("T", 24))
+        num_agents = self.env_config.get("num_agents", self.env_config.get("n_homes", 6))
+        timeline_length = self.env_config.get("timeline_length", self.env_config.get("T", 24))
 
-        tasks_per_home = self.config.get("tasks_per_home", (3, 6))
+        tasks_per_home = self.env_config.get("tasks_per_home", (3, 6))
         try:
             min_tasks, max_tasks = tasks_per_home
         except Exception:
@@ -74,10 +74,10 @@ class SmartGridEnvironment(AbstractEnvironment):
         collab_cfg = SmartGridConfig(
             num_agents=int(num_agents),
             timeline_length=int(timeline_length),
-            min_machines_per_agent=int(self.config.get("min_machines_per_agent", min_tasks)),
-            max_machines_per_agent=int(self.config.get("max_machines_per_agent", max_tasks)),
-            min_sources_per_agent=int(self.config.get("min_sources_per_agent", 2)),
-            max_sources_per_agent=int(self.config.get("max_sources_per_agent", 3)),
+            min_machines_per_agent=int(self.env_config.get("min_machines_per_agent", min_tasks)),
+            max_machines_per_agent=int(self.env_config.get("max_machines_per_agent", max_tasks)),
+            min_sources_per_agent=int(self.env_config.get("min_sources_per_agent", 2)),
+            max_sources_per_agent=int(self.env_config.get("max_sources_per_agent", 3)),
             rng_seed=int(self.current_seed),
         )
 
@@ -111,9 +111,6 @@ class SmartGridEnvironment(AbstractEnvironment):
     async def async_init(self):
         await self.create_comm_network()
 
-    def set_agent_clients(self, agents: List["Agent"]):
-        self.agents = agents
-
     async def create_comm_network(self):
         """Create a single global blackboard for all agents."""
 
@@ -128,9 +125,6 @@ class SmartGridEnvironment(AbstractEnvironment):
             blackboard_id,
             ", ".join(self.agent_names),
         )
-
-    def get_agent_names(self) -> List[str]:
-        return self.agent_names.copy()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         if phase == "planning" and iteration > 1 and self.assignment:
@@ -152,25 +146,25 @@ class SmartGridEnvironment(AbstractEnvironment):
             "variables_assigned": len(self.assignment),
         }
 
-        context["max_iterations"] = self.config.get("max_iterations", 10)
+        context["max_iterations"] = self.env_config.get("max_iterations", 1)
         for key, value in kwargs.items():
             context[key] = value
         return context
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
         """Return the (partial) joint reward for a joint assignment."""
-        total_reward, _ = self.rewards(actions)
+        total_reward, _ = self._rewards(actions)
         return total_reward
 
     def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
         """Return the reward attributed to a single agent."""
-        _, local_rewards = self.rewards(actions)
+        _, local_rewards = self._rewards(actions)
         assert agent in local_rewards, f"Agent {agent} not found in local rewards"
         local_reward = local_rewards.get(agent)
         assert local_reward is not None, f"Local reward for agent {agent} is None"
         return local_reward
 
-    def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
+    def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """Compute joint reward and per-agent rewards for a given joint assignment."""
         total_reward = 0.0
         local_rewards: Dict[str, float] = {a: 0.0 for a in self.agent_names}
@@ -193,8 +187,8 @@ class SmartGridEnvironment(AbstractEnvironment):
 
     def done(self, iteration: int) -> bool:
         """Return True when the environment is finished."""
-        assert self.config is not None, "Config not available"
-        max_iterations = self.config.get("max_iterations", 10)
+        assert self.env_config is not None, "Config not available"
+        max_iterations = self.env_config.get("max_iterations", 1)
         if iteration > max_iterations:
             logger.info("Reached max iterations (%s) - stopping simulation", max_iterations)
             return True
@@ -223,7 +217,7 @@ class SmartGridEnvironment(AbstractEnvironment):
             for machine_id, source_id in sorted(self.assignment.items()):
                 logger.info("  %s -> %s", machine_id, source_id)
 
-        joint_reward, agent_rewards = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self._rewards(self.assignment)
         ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
         logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
 
@@ -260,6 +254,34 @@ class SmartGridEnvironment(AbstractEnvironment):
         data_file = log_dir / f"data_iteration_{iteration}.json"
         with open(data_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
+
+    def get_final_summary(self) -> Dict[str, Any]:
+        total_vars = len(self.problem.variables)
+        final_assignments = f"{len(self.assignment)}/{total_vars} machines"
+        if not self.instance or len(self.assignment) != total_vars:
+            return {
+                "status": "incomplete",
+                "variables_assigned": len(self.assignment),
+                "total_variables": total_vars,
+                "total_agents": len(self.agent_names),
+                "final_assignments": final_assignments,
+            }
+
+        joint_reward, agent_rewards = self._rewards(self.assignment)
+        return {
+            "status": "complete",
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
+            "assignment": self.assignment.copy(),
+            "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
+            "total_agents": len(self.agent_names),
+            "final_assignments": final_assignments,
+        }
+
+    #### MCP-specific methods ####
 
     def get_serializable_state(self) -> Dict[str, Any]:
         machines: Dict[str, Any] = {}
@@ -300,29 +322,3 @@ class SmartGridEnvironment(AbstractEnvironment):
             joint_reward = self.joint_reward(self.assignment)
             if "result" in response:
                 response["result"]["joint_reward"] = joint_reward
-
-    def get_final_summary(self) -> Dict[str, Any]:
-        total_vars = len(self.problem.variables)
-        final_assignments = f"{len(self.assignment)}/{total_vars} machines"
-        if not self.instance or len(self.assignment) != total_vars:
-            return {
-                "status": "incomplete",
-                "variables_assigned": len(self.assignment),
-                "total_variables": total_vars,
-                "total_agents": len(self.agent_names),
-                "final_assignments": final_assignments,
-            }
-
-        joint_reward, agent_rewards = self.rewards(self.assignment)
-        return {
-            "status": "complete",
-            "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
-            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
-            "agent_rewards": agent_rewards,
-            "assignment": self.assignment.copy(),
-            "total_variables": total_vars,
-            "variables_assigned": len(self.assignment),
-            "total_agents": len(self.agent_names),
-            "final_assignments": final_assignments,
-        }

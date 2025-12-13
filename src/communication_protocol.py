@@ -41,7 +41,6 @@ class CommunicationProtocol:
         """
         self.config = config
         self.simulation_config = config["simulation"]
-        # self.blackboard_manager = Megaboard()
         self.tool_logger = tool_logger
         self.run_timestamp = run_timestamp
         self.blackboard_logger = BlackboardLogger(self.config, run_timestamp=self.run_timestamp)
@@ -130,8 +129,7 @@ class CommunicationProtocol:
         async with self.mcp_client as client:
             return (await client.call_tool("get_blackboard_string_ids")).data
 
-    async def post_system_message(self, blackboard_id: int, kind: str, payload: Optional[Dict[str, Any]] = None,
-                           phase: Optional[str] = None, iteration: Optional[int] = None) -> str:
+    async def post_system_message(self, blackboard_id: int, kind: str, payload: Optional[Dict[str, Any]] = None) -> str:
         async with self.mcp_client as client:
             # Only pass the parameters that the MCP server tool accepts
             return (await client.call_tool("post_system_message", {"blackboard_id": blackboard_id, "kind": kind, "payload": payload})).data

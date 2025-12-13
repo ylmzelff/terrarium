@@ -41,10 +41,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
     def __init__(self, communication_protocol, config, tool_logger):
         """Initialize the MeetingScheduling environment."""
         self.full_config = config
-        self.config: Dict[str, Any] = config["environment"]
+        self.env_config: Dict[str, Any] = config["environment"]
         self.simulation_config: Dict[str, Any] = config["simulation"]
         # Get the correct seed from environment config (matches what's used for instance generation)
-        self.current_seed = self.config.get("rng_seed", 42)
+        self.current_seed = self.env_config.get("rng_seed", 42)
 
         # Instance management
         # Partial joint assignment: variable_name -> chosen interval (e.g., "3-5" or "skip")
@@ -61,14 +61,14 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance -------------------------------------------------
-        num_agents = self.config.get("num_agents", self.config.get("n_agents", 8))
-        num_meetings = self.config.get("num_meetings", self.config.get("n_meetings", 6))
-        timeline_length = self.config.get("timeline_length", 12)
-        min_participants = self.config.get("min_participants", 2)
-        max_participants = self.config.get(
-            "max_participants", self.config.get("max_attendees_per_meeting", 4)
+        num_agents = self.env_config.get("num_agents", self.env_config.get("n_agents", 8))
+        num_meetings = self.env_config.get("num_meetings", self.env_config.get("n_meetings", 6))
+        timeline_length = self.env_config.get("timeline_length", 12)
+        min_participants = self.env_config.get("min_participants", 2)
+        max_participants = self.env_config.get(
+            "max_participants", self.env_config.get("max_attendees_per_meeting", 4)
         )
-        soft_ratio = self.config.get("soft_meeting_ratio", 0.6)
+        soft_ratio = self.env_config.get("soft_meeting_ratio", 0.6)
 
         collab_cfg = MeetingSchedulingConfig(
             num_agents=int(num_agents),
@@ -110,10 +110,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
     async def async_init(self):
         await self.create_comm_network()
 
-    def set_agent_clients(self, agents: List['Agent']):
-        """Set the agents for the environment."""
-        self.agents = agents
-
     async def create_comm_network(self):
         """Create communication blackboards for each multi‑agent meeting."""
         # Create one blackboard per meeting (all participants coordinate there)
@@ -139,35 +135,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 participants,
                 meeting.meeting_id,
             )
-
-    def generate_final_summary(self):
-        """Generate final simulation summary."""
-        logger.info("%s", "=" * 60)
-        logger.info("SIMULATION COMPLETE - FINAL SUMMARY")
-        logger.info("%s", "=" * 60)
-
-        # Get environment-specific final summary
-        final_summary = self.get_final_summary()
-
-        logger.info("Total iterations: %s", self.current_iteration)
-
-        if final_summary:
-            for key, value in final_summary.items():
-                if isinstance(value, dict):
-                    logger.info("%s:", key)
-                    for sub_key, sub_value in value.items():
-                        logger.info("  %s: %s", sub_key, sub_value)
-                else:
-                    logger.info("%s: %s", key, value)
-
-    def log_iteration_summary(self, iteration: int):
-        """Log the summary of an iteration."""
-        logger.info("--- ITERATION %s SUMMARY ---", iteration)
-        self.log_iteration(iteration)
-
-    def get_agent_names(self) -> List[str]:
-        """Get list of agent names."""
-        return self.agent_names.copy()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
@@ -199,7 +166,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         }
 
         # Add configuration info
-        context["max_iterations"] = self.config.get("max_iterations", 10)
+        context["max_iterations"] = self.env_config.get("max_iterations", 1)
 
         # Add additional context from kwargs (like planning_round)
         for key, value in kwargs.items():
@@ -210,8 +177,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
     def done(self, iteration: int) -> bool:
         """Return True when the environment is finished."""
         # Check max iterations first
-        assert self.config is not None, "Config not available"
-        max_iterations = self.config.get("max_iterations", 10)
+        assert self.env_config is not None, "Config not available"
+        max_iterations = self.env_config.get("max_iterations", 1)
         if iteration > max_iterations:
             logger.info("Reached max iterations (%s) - stopping simulation", max_iterations)
             return True
@@ -233,18 +200,18 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
         """Return the joint reward for a joint assignment."""
-        total_reward, _ = self.rewards(actions)
+        total_reward, _ = self._rewards(actions)
         return total_reward
 
     def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
         """Return the reward attributed to a single agent."""
-        _, local_rewards = self.rewards(actions)
+        _, local_rewards = self._rewards(actions)
         assert agent in local_rewards, f"Agent {agent} not found in local rewards"
         local_reward = local_rewards.get(agent)
         assert local_reward is not None, f"Local reward for agent {agent} is None"
         return local_reward
 
-    def rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
+    def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
         Compute joint reward and per-agent rewards for a given joint assignment.
 
@@ -288,7 +255,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             for var_name, value in sorted(self.assignment.items()):
                 logger.info("  %s: %s", var_name, value)
 
-        joint_reward, agent_rewards = self.rewards(self.assignment)
+        joint_reward, agent_rewards = self._rewards(self.assignment)
         ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
         logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
 
@@ -332,6 +299,35 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         data_file = log_dir / f"data_iteration_{iteration}.json"
         with open(data_file, "w") as f:
             json.dump(score_entry, f, indent=2, ensure_ascii=False)
+
+    def get_final_summary(self) -> Dict[str, Any]:
+        """Get a final summary of the entire simulation."""
+        total_vars = len(self.problem.variables)
+        final_attendance_decisions = f"{len(self.assignment)}/{total_vars} variables"
+        if not self.instance or len(self.assignment) != total_vars:
+            return {
+                "status": "incomplete",
+                "variables_assigned": len(self.assignment),
+                "total_variables": total_vars,
+                "total_agents": len(self.agent_names),
+                "final_attendance_decisions": final_attendance_decisions,
+            }
+
+        joint_reward, agent_rewards = self._rewards(self.assignment)
+        return {
+            "status": "complete",
+            "joint_reward": joint_reward,
+            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
+            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
+            "agent_rewards": agent_rewards,
+            "attendance": self.assignment.copy(),
+            "total_variables": total_vars,
+            "variables_assigned": len(self.assignment),
+            "total_agents": len(self.agent_names),
+            "final_attendance_decisions": final_attendance_decisions,
+        }
+
+    #### MCP-specific methods ####
 
     def get_serializable_state(self) -> Dict[str, Any]:
         """
@@ -384,30 +380,3 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             joint_reward = self.joint_reward(self.assignment)
             if "result" in response:
                 response["result"]["joint_reward"] = joint_reward
-
-    def get_final_summary(self) -> Dict[str, Any]:
-        """Get a final summary of the entire simulation."""
-        total_vars = len(self.problem.variables)
-        final_attendance_decisions = f"{len(self.assignment)}/{total_vars} variables"
-        if not self.instance or len(self.assignment) != total_vars:
-            return {
-                "status": "incomplete",
-                "variables_assigned": len(self.assignment),
-                "total_variables": total_vars,
-                "total_agents": len(self.agent_names),
-                "final_attendance_decisions": final_attendance_decisions,
-            }
-
-        joint_reward, agent_rewards = self.rewards(self.assignment)
-        return {
-            "status": "complete",
-            "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
-            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
-            "agent_rewards": agent_rewards,
-            "attendance": self.assignment.copy(),
-            "total_variables": total_vars,
-            "variables_assigned": len(self.assignment),
-            "total_agents": len(self.agent_names),
-            "final_attendance_decisions": final_attendance_decisions,
-        }
