@@ -81,7 +81,8 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
 
         # Initialize environment-specific tools on the MCP server
         async with mcp_client as client:
-            result = await client.call_tool("initialize_environment_tools", {"environment_name": environment_name})
+            env_class_name = environment.__class__.__name__
+            result = await client.call_tool("initialize_environment_tools", {"environment_name": env_class_name})
             print(f"MCP server environment tools: {result.data}")
 
         # Reset tool call log for new simulation
@@ -128,7 +129,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             max_conversation_steps=max_conversation_steps,
             tool_logger=tool_logger,
             trajectory_logger=trajectory_logger,
-            environment_name=environment_name,
+            environment=environment,
             generation_params=generation_params,
             vllm_runtime=vllm_runtime if provider == "vllm" else None,
         )

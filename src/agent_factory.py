@@ -25,7 +25,7 @@ def build_agents(
     max_conversation_steps: int,
     tool_logger: Any,
     trajectory_logger: Any,
-    environment_name: str,
+    environment: Any,
     generation_params: Dict[str, Any],
     vllm_runtime: Any = None,
     shuffle: bool = True,
@@ -38,6 +38,10 @@ def build_agents(
     if not issubclass(agent_cls, BaseAgent):
         raise TypeError(f"agent_cls must be a subclass of BaseAgent, got: {agent_cls}")
 
+    if environment is None:
+        raise ValueError("environment is required")
+    environment_name = environment.__class__.__name__
+
     init_kwargs: Dict[str, Any] = dict(agent_kwargs or {})
     init_kwargs.setdefault("generation_params", generation_params)
 
@@ -46,6 +50,7 @@ def build_agents(
         agent_cls.__module__,
         getattr(agent_cls, "__qualname__", agent_cls.__name__),
     )
+    logger.info("Agent factory environment=%s", environment_name)
 
     agents: List[BaseAgent] = []
     for name in agent_names:
