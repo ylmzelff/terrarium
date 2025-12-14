@@ -131,30 +131,35 @@ class SequentialCommunicationProtocol(BaseCommunicationProtocol):
         """Handle a single agent's planning turn."""
         # Get blackboard contexts from blackboard manager
         async with self.mcp_client as client:
-            blackboard_contexts = (await client.call_tool("get_agent_blackboard_contexts", {"agent_name": agent_name})).data
+            blackboard_contexts = (
+                await client.call_tool("get_agent_blackboard_contexts", {"agent_name": agent_name})
+            ).data
             self.environment = environment
-            #blackboard_contexts = self.blackboard_manager.get_agent_blackboard_contexts()
+            # blackboard_contexts = self.blackboard_manager.get_agent_blackboard_contexts()
             prompts = environment.prompts
-            response_data = await agent.generate_agent_response(
+            response_data = await agent.generate_response(
                 agent_name=agent_name,
                 agent_context=agent_context,
                 blackboard_context=blackboard_contexts,
-                communication_protocol = self,
+                communication_protocol=self,
                 prompts=prompts,
                 phase="planning",
                 iteration=iteration,
-                round_num=planning_round
+                round_num=planning_round,
             )
 
             # Log blackboard states after agent's turn via MCP
             if self.blackboard_logger:
                 await self._ensure_server_logger_initialized(client)
-                result = await client.call_tool("log_blackboard_states", {
-                    "iteration": iteration,
-                    "phase": "planning",
-                    "agent_name": agent_name,
-                    "planning_round": planning_round
-                })
+                await client.call_tool(
+                    "log_blackboard_states",
+                    {
+                        "iteration": iteration,
+                        "phase": "planning",
+                        "agent_name": agent_name,
+                        "planning_round": planning_round,
+                    },
+                )
 
     async def generate_comm_network(self, participants, context: str, template: Optional[Dict[str, Any]] = None):
         """
@@ -198,17 +203,19 @@ class SequentialCommunicationProtocol(BaseCommunicationProtocol):
 
         # Get blackboard contexts
         async with self.mcp_client as client:
-            blackboard_contexts = (await client.call_tool("get_agent_blackboard_contexts", {"agent_name": agent_name})).data
+            blackboard_contexts = (
+                await client.call_tool("get_agent_blackboard_contexts", {"agent_name": agent_name})
+            ).data
             self.environment = environment
             prompts = environment.prompts
-            await agent.generate_agent_response(
+            await agent.generate_response(
                 agent_name=agent_name,
                 agent_context=agent_context,
                 blackboard_context=blackboard_contexts,
-                communication_protocol = self,
+                communication_protocol=self,
                 prompts=prompts,
                 phase="execution",
-                iteration=iteration
+                iteration=iteration,
             )
 
             # Log blackboard states after agent's turn via MCP
