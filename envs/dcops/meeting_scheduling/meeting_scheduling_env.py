@@ -16,9 +16,9 @@ from problem_layer.base import ProblemDefinition
 import logging
 logger = logging.getLogger(__name__)
 
-# Use TYPE_CHECKING to avoid circular import (Agent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → Agent)
+# Use TYPE_CHECKING to avoid circular import (BaseAgent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → BaseAgent)
 if TYPE_CHECKING:
-    from src.agent import Agent
+    from src.agents.base import BaseAgent
 # Import abstract environment interface and loggers
 from envs.abstract_environment import AbstractEnvironment
 from src.utils import (
@@ -95,7 +95,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.joint_reward_history: List[float] = []
         self.agent_names = list(self.problem.agents.keys())
         self.max_joint_reward = self.compute_max_joint_reward()
-        self.agents: List['Agent'] = []
+        self.agents: List["BaseAgent"] = []
 
         # Initialize prompts (Put this after all other instance variables)
         self.prompts = MeetingSchedulingPrompts(self, self.full_config)

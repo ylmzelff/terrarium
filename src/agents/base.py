@@ -2,9 +2,9 @@ import time
 from typing import Dict, Optional, Any
 from llm_server.clients.abstract_client import AbstractClient
 import traceback
-from .toolset_discovery import ToolsetDiscovery
+from ..toolset_discovery import ToolsetDiscovery
 
-class Agent:
+class BaseAgent:
     """
     Agent-dependent methods for LLM agents.
     """

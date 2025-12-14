@@ -1,30 +1,23 @@
 """
 Communication protocol for managing multi-agent interactions and phases.
-
-This module implements the generic communication protocol that can work with
-any environment implementing the AbstractEnvironment interface. It handles
-phases, iterations, blackboard management, and LLM interactions.
 """
 
 import random
-from typing import Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
-# Import our modules
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.agent import Agent
-from typing import Dict, Any, Optional
+from src.communication_protocols.base import BaseCommunicationProtocol
 from src.logger import BlackboardLogger
 
-class CommunicationProtocol:
+if TYPE_CHECKING:
+    from src.agents.base import BaseAgent
+
+class SequentialCommunicationProtocol(BaseCommunicationProtocol):
     """
     Manages the overall communication protocol.
 
     This class is environment-agnostic and handles:
     - Phase management (planning, execution)
     - Agent turn ordering and iteration
-    NOTE: DCOP Environments only have 1 iteration per simulation (e.g., MeetingScheduling, PersonalAssistant, SmartGrid)
     """
 
     def __init__(self, config: Dict[str, Any],
@@ -62,7 +55,7 @@ class CommunicationProtocol:
         Extract serializable state from environment for MCP transmission.
         Delegates to environment-specific implementation.
         """
-        assert self.environment is not None, "Environment should be set for CommunicationProtocol"
+        assert self.environment is not None, "Environment should be set for communication protocol"
         # Call environment-specific state extraction
         if hasattr(self.environment, 'get_serializable_state'):
             return self.environment.get_serializable_state()
@@ -134,7 +127,7 @@ class CommunicationProtocol:
             # Only pass the parameters that the MCP server tool accepts
             return (await client.call_tool("post_system_message", {"blackboard_id": blackboard_id, "kind": kind, "payload": payload})).data
         
-    async def agent_planning_turn(self, agent: 'Agent', agent_name: str, agent_context, environment, iteration: int, planning_round: int):
+    async def agent_planning_turn(self, agent: "BaseAgent", agent_name: str, agent_context, environment, iteration: int, planning_round: int):
         """Handle a single agent's planning turn."""
         # Get blackboard contexts from blackboard manager
         async with self.mcp_client as client:
@@ -194,7 +187,7 @@ class CommunicationProtocol:
 
         return blackboard_id
 
-    async def agent_execution_turn(self, agent: 'Agent', agent_name: str, agent_context, environment, iteration: int):
+    async def agent_execution_turn(self, agent: "BaseAgent", agent_name: str, agent_context, environment, iteration: int):
         """
         Handle a single agent's execution turn with retry logic.
 

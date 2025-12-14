@@ -8,7 +8,7 @@ import logging
 import random
 from typing import Any, Dict, List, Optional, Sequence, Type
 
-from src.agent import Agent
+from src.agents.base import BaseAgent
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def build_agents(
     agent_names: Sequence[str],
     *,
-    agent_cls: Type[Agent] = Agent,
+    agent_cls: Type[BaseAgent] = BaseAgent,
     agent_kwargs: Optional[Dict[str, Any]] = None,
     provider: str,
     provider_label: str,
@@ -29,14 +29,14 @@ def build_agents(
     generation_params: Dict[str, Any],
     vllm_runtime: Any = None,
     shuffle: bool = True,
-) -> List[Agent]:
+) -> List[BaseAgent]:
     """
     Build a list of Agents (or Agent subclasses) given agent names and provider config.
 
     This keeps runner scripts thin while avoiding environment<->LLM coupling.
     """
-    if not issubclass(agent_cls, Agent):
-        raise TypeError(f"agent_cls must be a subclass of Agent, got: {agent_cls}")
+    if not issubclass(agent_cls, BaseAgent):
+        raise TypeError(f"agent_cls must be a subclass of BaseAgent, got: {agent_cls}")
 
     init_kwargs: Dict[str, Any] = dict(agent_kwargs or {})
     init_kwargs.setdefault("generation_params", generation_params)
@@ -47,7 +47,7 @@ def build_agents(
         getattr(agent_cls, "__qualname__", agent_cls.__name__),
     )
 
-    agents: List[Agent] = []
+    agents: List[BaseAgent] = []
     for name in agent_names:
         if provider == "vllm":
             if not vllm_runtime:

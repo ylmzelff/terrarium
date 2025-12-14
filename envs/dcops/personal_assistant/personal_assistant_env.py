@@ -30,9 +30,9 @@ from .personal_assistant_prompts import PersonalAssistantPrompts
 
 logger = logging.getLogger(__name__)
 
-# Use TYPE_CHECKING to avoid circular import (Agent → ToolsetDiscovery → EnvironmentTools → Environment → Agent)
+# Use TYPE_CHECKING to avoid circular import (BaseAgent → ToolsetDiscovery → EnvironmentTools → Environment → BaseAgent)
 if TYPE_CHECKING:
-    from src.agent import Agent
+    from src.agents.base import BaseAgent
 
 
 class PersonalAssistantEnvironment(AbstractEnvironment):
@@ -103,7 +103,7 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         # Score tracking
         self.joint_reward_history: List[float] = []
         self.agent_names = list(self.problem.agents.keys())
-        self.agents: List['Agent'] = [] # Set this later in main.py in case agents get different clients or settings
+        self.agents: List["BaseAgent"] = []  # Set this later in main.py in case agents get different clients or settings
         self.max_joint_reward = self.compute_max_joint_reward()
 
         # Initialize prompts (Put this after all other instance variables)

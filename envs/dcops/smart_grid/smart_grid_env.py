@@ -14,7 +14,7 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
 import logging
 
 if TYPE_CHECKING:
-    from src.agent import Agent
+    from src.agents.base import BaseAgent
 
 from problem_layer.smart_grid import SmartGridConfig, generate_instance
 from problem_layer.base import ProblemDefinition

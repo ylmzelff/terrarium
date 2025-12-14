@@ -18,9 +18,9 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from datetime import datetime
 import traceback
 
-from src.agent import Agent
+from src.agents.base import BaseAgent
 from src.agent_factory import build_agents
-from src.communication_protocol import CommunicationProtocol
+from src.communication_protocols.sequential import SequentialCommunicationProtocol
 from src.logger import ToolCallLogger, AgentTrajectoryLogger
 from src.utils import (
     configure_logging,
@@ -74,7 +74,9 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         tool_logger = ToolCallLogger(environment_name, seed, config, run_timestamp=run_timestamp)
         trajectory_logger = AgentTrajectoryLogger(environment_name, seed, config, run_timestamp=run_timestamp)
 
-        communication_protocol = CommunicationProtocol(config, tool_logger, mcp_client, run_timestamp=run_timestamp)
+        communication_protocol = SequentialCommunicationProtocol(
+            config, tool_logger, mcp_client, run_timestamp=run_timestamp
+        )
         environment = create_environment(communication_protocol, environment_name, config, tool_logger)
 
         # Initialize environment-specific tools on the MCP server
@@ -106,7 +108,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
-        agent_cls = Agent
+        agent_cls = BaseAgent
         agent_kwargs = {}
         if args.attack_type == "agent_poisoning":
             agent_cls = AgentPoisoningAttack
