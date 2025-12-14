@@ -44,15 +44,6 @@ except ConnectionError as exc:
     ) from exc
 
 async def run_simulation(config: Dict[str, Any]) -> bool:
-    """
-    Run a single simulation.
-
-    Args:
-        config: Configuration for the simulation
-
-    Returns:
-        True if simulation succeeded, False otherwise
-    """
     vllm_runtime = None
     try:
         seed = config["environment"]["rng_seed"]
@@ -60,7 +51,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
         if not run_timestamp:
             run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             config.setdefault("simulation", {})["run_timestamp"] = run_timestamp
-        logging.info(f"SIMULATION - SEED: {seed}")
 
         # Initialize environment
         environment_name = config["environment"]["name"]
@@ -113,7 +103,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             environment_name=environment_name,  # enables tool discovery
             generation_params=generation_params,
             vllm_runtime=vllm_runtime if provider == "vllm" else None,
-            log_fn=logging.info,
         )
         environment.set_agent_clients(agents)
 

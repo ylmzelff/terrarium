@@ -6,14 +6,18 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Type
 
 from src.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 
 def build_agents(
     agent_names: Sequence[str],
     *,
+    agent_cls: Type[Agent] = Agent,
+    agent_kwargs: Optional[Dict[str, Any]] = None,
     provider: str,
     provider_label: str,
     llm_config: Dict[str, Any],
@@ -24,29 +28,24 @@ def build_agents(
     environment_name: str,
     generation_params: Dict[str, Any],
     vllm_runtime: Any = None,
-    make_agent: Optional[Callable[[Any, str, str], Agent]] = None,
     shuffle: bool = True,
-    log_fn: Optional[Callable[[str], None]] = None,
 ) -> List[Agent]:
     """
     Build a list of Agents (or Agent subclasses) given agent names and provider config.
 
     This keeps runner scripts thin while avoiding environment<->LLM coupling.
     """
-    if log_fn is None:
-        log_fn = logging.info
+    if not issubclass(agent_cls, Agent):
+        raise TypeError(f"agent_cls must be a subclass of Agent, got: {agent_cls}")
 
-    if make_agent is None:
-        make_agent = lambda client, name, agent_model_name: Agent(
-            client,
-            name,
-            agent_model_name,
-            max_conversation_steps,
-            tool_logger,
-            trajectory_logger,
-            environment_name,
-            generation_params=generation_params,
-        )
+    init_kwargs: Dict[str, Any] = dict(agent_kwargs or {})
+    init_kwargs.setdefault("generation_params", generation_params)
+
+    logger.info(
+        "Agent factory using agent_cls=%s.%s",
+        agent_cls.__module__,
+        getattr(agent_cls, "__qualname__", agent_cls.__name__),
+    )
 
     agents: List[Agent] = []
     for name in agent_names:
@@ -60,8 +59,23 @@ def build_agents(
             client = get_client_instance(llm_config)
             agent_model_name = model_name
 
-        log_fn(f"Initializing Agent: {name} with {provider_label} - {agent_model_name}")
-        agent = make_agent(client, name, agent_model_name)
+        agent = agent_cls(
+            client,
+            name,
+            agent_model_name,
+            max_conversation_steps,
+            tool_logger,
+            trajectory_logger,
+            environment_name,
+            **init_kwargs,
+        )
+        logger.info(
+            "Initialized %s: %s with %s - %s",
+            agent.__class__.__name__,
+            name,
+            provider_label,
+            agent_model_name,
+        )
         agents.append(agent)
 
     if shuffle:

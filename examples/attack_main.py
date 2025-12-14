@@ -106,44 +106,19 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
 
         max_conversation_steps = config["simulation"].get("max_conversation_steps", 3)
 
-        def make_agent(client, name: str, agent_model_name: str):
-            if args.attack_type == "agent_poisoning":
-                return AgentPoisoningAttack(
-                    client,
-                    name,
-                    agent_model_name,
-                    max_conversation_steps,
-                    tool_logger,
-                    trajectory_logger,
-                    environment_name,
-                    args.poison_payload,
-                    generation_params=generation_params,
-                )
-            if args.attack_type == "context_overflow":
-                return ContextOverflowAttack(
-                    client,
-                    name,
-                    agent_model_name,
-                    max_conversation_steps,
-                    tool_logger,
-                    trajectory_logger,
-                    environment_name,
-                    args.poison_payload,
-                    generation_params=generation_params,
-                )
-            return Agent(
-                client,
-                name,
-                agent_model_name,
-                max_conversation_steps,
-                tool_logger,
-                trajectory_logger,
-                environment_name,
-                generation_params=generation_params,
-            )
+        agent_cls = Agent
+        agent_kwargs = {}
+        if args.attack_type == "agent_poisoning":
+            agent_cls = AgentPoisoningAttack
+            agent_kwargs = {"poison_payload": args.poison_payload}
+        elif args.attack_type == "context_overflow":
+            agent_cls = ContextOverflowAttack
+            agent_kwargs = {"poison_payload": args.poison_payload}
 
         agents = build_agents(
             agent_names,
+            agent_cls=agent_cls,
+            agent_kwargs=agent_kwargs,
             provider=provider,
             provider_label=provider_label,
             llm_config=llm_config,
@@ -154,8 +129,6 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             environment_name=environment_name,
             generation_params=generation_params,
             vllm_runtime=vllm_runtime if provider == "vllm" else None,
-            make_agent=make_agent,
-            log_fn=print,
         )
         environment.set_agent_clients(agents)
 
