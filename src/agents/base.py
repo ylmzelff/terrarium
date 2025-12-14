@@ -1,8 +1,10 @@
+import logging
 import time
 from typing import Dict, Optional, Any
 from llm_server.clients.abstract_client import AbstractClient
-import traceback
 from ..toolset_discovery import ToolsetDiscovery
+
+logger = logging.getLogger(__name__)
 
 class BaseAgent:
     """
@@ -43,11 +45,13 @@ class BaseAgent:
         self.toolset_discovery = ToolsetDiscovery()
         self.client = client
 
-        # Agent context for logging (set via set_agent_context)
+        # Agent context for logging (set via set_meta_context)
         self.current_agent_name = None
         self.current_phase = None
         self.current_iteration = None
         self.current_round = None
+        self.communication_protocol = None
+        self.prompts = None
 
     def _build_generation_params(self, tool_set) -> Dict[str, Any]:
         """
@@ -127,8 +131,8 @@ class BaseAgent:
         """
         start_time = time.time()
         assert self.communication_protocol is not None, "Communication protocol not set for agent"
-        assert self.current_agent_name is not None, "Agent context not set - call set_agent_context first"
-        assert self.current_phase is not None, "Agent context not set - call set_agent_context first"
+        assert self.current_agent_name is not None, "Agent context not set - call set_meta_context first"
+        assert self.current_phase is not None, "Agent context not set - call set_meta_context first"
 
         try:
             # NOTE: Depending on the communication protocol implementation, this logic may have to change. This will be addressed in the future.
@@ -179,12 +183,60 @@ class BaseAgent:
             # Log the failed tool call if logger is available
             self._log_tool_call(tool_name, tool_arguments, error_result, start_time)
 
-            print(f"ERROR: {error_msg}")
+            logger.exception(error_msg)
             return error_result
 
 
 
-    async def generate_response(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+    async def generate_response(
+        self,
+        *,
+        agent_name: str,
+        agent_context: Dict[str, Any],
+        blackboard_context: Dict[str, str],
+        prompts: Any,
+        communication_protocol: Any,
+        phase: str,
+        iteration: int,
+        round_num: int,
+    ) -> Dict[str, Any]:
+        """
+        Generate a response for a specific agent with full context.
+
+        Returns:
+            Dictionary containing agent's response.
+        """
+        try:
+            self.communication_protocol = communication_protocol
+            if self.communication_protocol is None:
+                raise ValueError("communication_protocol must be set for tool-based execution")
+
+            self.prompts = prompts
+            if self.prompts is None:
+                raise ValueError("prompts must be provided to generate a response")
+
+            self.set_meta_context(
+                agent_name=agent_name,
+                phase=phase,
+                iteration=iteration,
+                round_num=round_num,
+            )
+
+            system_prompt = self.prompts.get_system_prompt()
+            user_prompt = self.prompts.get_user_prompt(
+                agent_name=agent_name,
+                agent_context=agent_context,
+                blackboard_context=blackboard_context,
+            )
+            if system_prompt is None or user_prompt is None:
+                raise ValueError("Prompts returned empty system/user prompt")
+
+            return await self._multi_step_response_generation(system_prompt=system_prompt, user_prompt=user_prompt)
+        except Exception as e:
+            logger.exception("Can't get LLM response: %s", e)
+            raise
+
+    async def _multi_step_response_generation(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         """
         Generate a response multi-step tool execution loop.
         Example: Call Tool -> Execute Tool (us) -> Append output to context -> Call Tool -> ...
@@ -197,154 +249,100 @@ class BaseAgent:
             Dict with keys: response, usage, model, has_tool_calls, etc.
         """
         # Get tools for this environment and phase (normalize environment name to lowercase)
-        assert self.current_phase is not None, "Agent context not set - call set_agent_context first"
-        tool_set = self.toolset_discovery.get_tools_for_environment(self.environment_name.lower(), self.current_phase) + self.toolset_discovery.get_tools_for_blackboard(self.current_phase)
-        try:
-            params = self._build_generation_params(tool_set=tool_set)
-            # Get system and user prompt into Reponses API format
-            # TODO: Add functions to abstract client class such as init_context()
-            context = self.client.init_context(system_prompt, user_prompt)
-            # Make API call with or without tools
-            if tool_set:
-                total_tools_executed = 0
-                total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-                # Get a response and update context for next conversation step
-                # response object will have tool calls embedded inside and text response
-                response, response_str = self.client.generate_response(
-                    input=context,
-                    params=params
+        assert self.current_phase is not None, "Agent context not set - call set_meta_context first"
+        env_tools = self.toolset_discovery.get_tools_for_environment(
+            self.environment_name.lower(),
+            self.current_phase,
+        )
+        blackboard_tools = self.toolset_discovery.get_tools_for_blackboard(self.current_phase)
+        tool_set = env_tools + blackboard_tools
+        params = self._build_generation_params(tool_set=tool_set)
+        # Get system and user prompt into Reponses API format
+        # TODO: Add functions to abstract client class such as init_context()
+        context = self.client.init_context(system_prompt, user_prompt)
+        # Make API call with or without tools
+        if tool_set:
+            total_tools_executed = 0
+            total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            # Get a response and update context for next conversation step
+            # response object will have tool calls embedded inside and text response
+            response, response_str = self.client.generate_response(
+                input=context,
+                params=params
+            )
+            total_usage = self.client.get_usage(response, total_usage)
+            current_response = response
+
+            # Initialize trajectory tracking as dict
+            trajectory_dict = {}
+            has_reasoning_trace = False
+
+            # Perform the multi-step tool execution loop where we supply 
+            for step in range(self.max_conversation_steps):
+                # Process tool calls and extract content
+                tool_calls_executed, context, step_tools = await self.client.process_tool_calls(
+                    current_response, context, self._execute_tool_call
                 )
-                total_usage = self.client.get_usage(response, total_usage)
-                current_response = response
+                total_tools_executed += tool_calls_executed
 
-                # Initialize trajectory tracking as dict
-                trajectory_dict = {}
-                has_reasoning_trace = False
+                # Add trajectory step to dict for logging
+                if step_tools:
+                    step_key = f"step_{step + 1}"
+                    trajectory_dict[step_key] = {
+                        "tools": step_tools,
+                    }
 
-                for step in range(self.max_conversation_steps):
-                    # Process tool calls and extract content
-                    tool_calls_executed, context, step_tools = await self.client.process_tool_calls(
-                        current_response, context, self._execute_tool_call
+                # If this is the last allowed step, don't continue
+                if step >= self.max_conversation_steps - 1:
+                    break
+
+                # Continue the conversation using the accumulated context
+                try:
+                    # Get a response and update context for next conversation step
+                    response, response_str = self.client.generate_response(
+                        input=context,
+                        params=params
                     )
-                    total_tools_executed += tool_calls_executed
-
-                    # Add trajectory step to dict for logging
-                    if step_tools:
-                        step_key = f"step_{step + 1}"
-                        trajectory_dict[step_key] = {
-                            "tools": step_tools,
-                        }
-
-                    # If this is the last allowed step, don't continue
-                    if step >= self.max_conversation_steps - 1:
-                        break
-
-                    # Continue the conversation using the accumulated context
-                    try:
-                        # Get a response and update context for next conversation step
-                        response, response_str = self.client.generate_response(
-                            input=context,
-                            params=params
-                        )
-                        total_usage = self.client.get_usage(response, total_usage)
-                        # Update current_response for next conversation step
-                        # response object will have tool calls embedded inside and text response
-                        current_response = response  
+                    total_usage = self.client.get_usage(response, total_usage)
+                    # Update current_response for next conversation step
+                    # response object will have tool calls embedded inside and text response
+                    current_response = response  
 
 
-                    except Exception as e:
-                        print(f"ERROR: Failed to continue conversation at step {step + 1}: {e}")
+                except Exception as e:
+                    logger.exception("Failed to continue conversation at step %s: %s", step + 1, e)
 
-                        # Log trajectory even if conversation failed
-                        self._log_trajectory(trajectory_dict)
+                    # Log trajectory even if conversation failed
+                    self._log_trajectory(trajectory_dict)
 
-                        return {
-                            "response": f"[ERROR]Tool execution completed but failed to continue conversation at step {step + 1}: {e}",
-                            "full_content": response_str,
-                            "usage": total_usage,
-                            "model": self.model_name,
-                            "reasoning_available": has_reasoning_trace,
-                            "tool_calls": None,
-                            "has_tool_calls": False,
-                            "manual_tool_execution": True,
-                            "tools_executed": total_tools_executed,
-                            "conversation_steps": step + 1
-                        }
+                    return {
+                        "response": f"[ERROR]Tool execution completed but failed to continue conversation at step {step + 1}: {e}",
+                        "full_content": response_str,
+                        "usage": total_usage,
+                        "model": self.model_name,
+                        "reasoning_available": has_reasoning_trace,
+                        "tool_calls": None,
+                        "has_tool_calls": False,
+                        "manual_tool_execution": True,
+                        "tools_executed": total_tools_executed,
+                        "conversation_steps": step + 1
+                    }
 
-                # Log trajectory if trajectory logger is available
-                self._log_trajectory(trajectory_dict)
+            # Log trajectory if trajectory logger is available
+            self._log_trajectory(trajectory_dict)
 
-                # Return final response with accumulated stats
-                return {
-                    "response": response_str,
-                    "full_content": response_str,
-                    "usage": total_usage,
-                    "model": getattr(current_response, 'model', None) or self.model_name,
-                    "reasoning_available": has_reasoning_trace,
-                    "tool_calls": None,
-                    "has_tool_calls": total_tools_executed > 0,
-                    "manual_tool_execution": True,
-                    "tools_executed": total_tools_executed,
-                    "conversation_steps": step + 1 if total_tools_executed > 0 else 1
-                }
-            else:
-                raise ValueError("[ERROR] tool_set is empty. Agents are required to have access to tools for tool-based execution.")
+            # Return final response with accumulated stats
+            return {
+                "response": response_str,
+                "full_content": response_str,
+                "usage": total_usage,
+                "model": getattr(current_response, 'model', None) or self.model_name,
+                "reasoning_available": has_reasoning_trace,
+                "tool_calls": None,
+                "has_tool_calls": total_tools_executed > 0,
+                "manual_tool_execution": True,
+                "tools_executed": total_tools_executed,
+                "conversation_steps": step + 1 if total_tools_executed > 0 else 1
+            }
 
-        except Exception as e:
-            print(f"[ERROR] Issue generating agent response: {e}")
-            raise
-    
-    async def generate_agent_response(
-        self,
-        agent_name: str,
-        agent_context: Dict[str, Any],
-        blackboard_context: Dict[str, str],
-        prompts: Any,
-        communication_protocol: Any,
-        phase: str,
-        iteration: int,
-        round_num: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Generate a response for a specific agent with full context.
-
-        Args:
-            agent_name: Name of the agent
-            agent_context: Agent's private context
-            blackboard_context: Recent blackboard activity context
-            prompts: Prompt manager instance
-            communication_protocol: Communication protocol instance
-            phase: Current phase (for backend context setting)
-            iteration: Current iteration (for backend context setting)
-            round_num: Planning round number if applicable (for backend context setting)
-
-        Returns:
-            Dictionary containing agent's response and thinking, or None if error
-        """
-
-        try:
-            self.set_meta_context(
-                agent_name=agent_name,
-                phase=phase,
-                iteration=iteration,
-                round_num=round_num
-            )
-            # Get prompts from environment if not directly provided
-            system_prompt = prompts.get_system_prompt()
-            user_prompt = prompts.get_user_prompt(
-                agent_name=agent_name,
-                agent_context=agent_context,
-                blackboard_context=blackboard_context
-            )
-            assert system_prompt is not None and user_prompt is not None, "System prompt and user prompt must be provided either directly or via environment"
-
-            self.communication_protocol = communication_protocol
-            self.prompts = prompts
-            return await self.generate_response(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt
-            )
-        except Exception as e:
-            print(f"[ERROR] Can't get LLM response: {e}")
-            print(f"Traceback: {traceback.format_exc()}")
-            return None
+        raise ValueError("[ERROR] tool_set is empty. Agents are required to have access to tools for tool-based execution.")
