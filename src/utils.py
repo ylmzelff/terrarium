@@ -319,6 +319,8 @@ def extract_model_info(full_config: Dict[str, Any]) -> str:
         model_name = llm_config.get("anthropic", {}).get("model", "unknown")
     elif provider == "gemini":
         model_name = llm_config.get("gemini", {}).get("model", "unknown")
+    elif provider == "together":
+        model_name = llm_config.get("together", {}).get("model", "unknown")
     elif provider == "vllm":
         model_name = _get_vllm_model_name(llm_config)
     else:
@@ -407,7 +409,7 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         llm_config: LLM configuration dictionary containing provider and provider-specific settings
 
     Returns:
-        Instantiated client (OpenAIClient, AnthropicClient, GeminiClient, or VLLMClient)
+        Instantiated client (OpenAIClient, AnthropicClient, GeminiClient, TogetherClient, or VLLMClient)
 
     Raises:
         ValueError: If provider is unknown
@@ -416,7 +418,7 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
     provider = llm_config.get("provider", "vllm").lower()
 
     if provider == "openai":
-        from llm_server.clients.openai import OpenAIClient
+        from llm_server.clients.openai_client import OpenAIClient
         return OpenAIClient()
     elif provider == "anthropic":
         from llm_server.clients.anthropic_client import AnthropicClient
@@ -424,6 +426,14 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
     elif provider == "gemini":
         from llm_server.clients.gemini_client import GeminiClient
         return GeminiClient()
+    elif provider == "together":
+        from llm_server.clients.together_client import TogetherClient
+
+        together_cfg = llm_config.get("together") or {}
+        base_url = str(together_cfg.get("base_url") or "https://api.together.xyz/v1")
+        request_timeout = int(together_cfg.get("request_timeout", 60))
+        api_key = together_cfg.get("api_key")
+        return TogetherClient(base_url=base_url, api_key=api_key, request_timeout=request_timeout)
     elif provider == "vllm":
         if not vllm_runtime:
             raise ValueError("vLLM runtime is required to initialize vLLM clients")
@@ -432,7 +442,7 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         client, _ = vllm_runtime.create_client(agent_name)
         return client
     else:
-        raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, vllm")
+        raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, together, vllm")
 
 
 def _get_environment_registry():
@@ -485,7 +495,7 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
     Extract model name based on provider from LLM configuration.
 
     Args:
-        provider: LLM provider name (openai, anthropic, gemini, vllm)
+        provider: LLM provider name (openai, anthropic, gemini, together, vllm)
         llm_config: LLM configuration dictionary
 
     Returns:
@@ -502,6 +512,8 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
         model_name = llm_config.get("anthropic", {}).get("model", "claude-3-5-sonnet-20241022")
     elif provider == "gemini":
         model_name = llm_config.get("gemini", {}).get("model", "gemini-2.0-flash-exp")
+    elif provider == "together":
+        model_name = llm_config.get("together", {}).get("model", "unknown-together-model")
     elif provider == "vllm":
         model_name = _get_vllm_model_name(llm_config)
     else:
