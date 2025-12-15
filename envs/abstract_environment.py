@@ -7,6 +7,7 @@ the generic communication and phase management.
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Sequence
 from src.logger import BlackboardLogger, PromptLogger
 from collections.abc import Mapping
@@ -98,6 +99,20 @@ class AbstractEnvironment(ABC):
 
         agent_names = self.get_agent_names()
         self.communication_network.validate_agents(agent_names)
+
+        # Save a visualization of the communication graph alongside other run logs.
+        tool_logger = getattr(self, "tool_logger", None)
+        log_dir = getattr(tool_logger, "log_dir", None)
+        if log_dir is not None:
+            try:
+                seed = getattr(self, "current_seed", None)
+                seed_int = int(seed) if seed is not None else None
+                self.communication_network.save_plot(
+                    Path(log_dir) / "communication_network.png",
+                    seed=seed_int,
+                )
+            except Exception as exc:
+                logger.warning("Failed to save communication_network plot: %s", exc)
 
         # Generate the communication network on the MCP server using Blackboard APIs
         self.network_blackboards = {}

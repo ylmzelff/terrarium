@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence
+from pathlib import Path
+from typing import List, Optional, Sequence
 
 import networkx as nx
 
@@ -12,9 +13,10 @@ class CommunicationNetwork:
 
     Convention used across Terrarium:
     - Nodes are agent names (strings).
-    - Each edge corresponds to one blackboard with exactly the 2 endpoint agents.
+    - Edges are potential pairwise connections; blackboard channels are derived
+      from this graph via `channel_groups()`.
     """
-    
+
     # These are set in the constructor of subclasses
     graph: nx.Graph
     consolidate_channels_enabled: bool = False
@@ -107,3 +109,136 @@ class CommunicationNetwork:
             a, b = sorted((u, v))
             edges.append((a, b))
         return [[a, b] for a, b in sorted(edges)]
+
+    def save_plot(self, path: str | Path, *, seed: Optional[int] = None) -> Path:
+        """Save a PNG visualization of this network graph to the given path."""
+        out_path = Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg", force=True)
+            import matplotlib.pyplot as plt
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Plotting requires matplotlib. Install it or disable plotting."
+            ) from exc
+
+        try:
+            plt.switch_backend("Agg")
+        except Exception:
+            pass
+
+        import colorsys
+        import itertools
+
+        graph = self.graph
+        n = graph.number_of_nodes()
+        channels = self.channel_groups()
+
+        figsize = (6, 6)
+        if n >= 30:
+            figsize = (9, 7)
+        if n >= 80:
+            figsize = (12, 9)
+
+        node_size = 900 if n <= 12 else 600 if n <= 30 else 350
+        font_size = 10 if n <= 12 else 8 if n <= 30 else 6
+        with_labels = n <= 60
+
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(1, 1, 1)
+        ax.set_title(
+            f"{self.__class__.__name__} "
+            f"(nodes={n}, edges={graph.number_of_edges()}, channels={len(channels)})"
+        )
+        ax.axis("off")
+
+        pos = nx.spring_layout(graph, seed=seed)
+
+        def channel_color(idx: int, total: int, *, is_clique: bool) -> tuple[float, float, float]:
+            # Deterministic HSV rainbow palette. Make cliques more saturated so they stand out.
+            if total <= 0:
+                return (0.2, 0.2, 0.2)
+            hue = (idx / total) % 1.0
+            saturation = 0.85 if is_clique else 0.6
+            value = 0.9 if is_clique else 0.85
+            return colorsys.hsv_to_rgb(hue, saturation, value)
+
+        clique_edges: List[tuple[str, str]] = []
+        clique_colors: List[tuple[float, float, float]] = []
+        pair_edges: List[tuple[str, str]] = []
+        pair_colors: List[tuple[float, float, float]] = []
+        channel_edges: set[tuple[str, str]] = set()
+
+        for idx, participants in enumerate(channels):
+            is_clique = len(participants) >= 3
+            color = channel_color(idx, len(channels), is_clique=is_clique)
+            participants_sorted = sorted(participants)
+
+            if len(participants_sorted) < 2:
+                continue
+
+            if len(participants_sorted) == 2:
+                a, b = participants_sorted
+                if graph.has_edge(a, b):
+                    edge = (a, b)
+                    pair_edges.append(edge)
+                    pair_colors.append(color)
+                    channel_edges.add(edge)
+                continue
+
+            for u, v in itertools.combinations(participants_sorted, 2):
+                if graph.has_edge(u, v):
+                    edge = (u, v)
+                    clique_edges.append(edge)
+                    clique_colors.append(color)
+                    channel_edges.add(edge)
+
+        # Draw remaining edges in light gray so the full topology is still visible.
+        remaining_edges = [
+            (u, v)
+            for u, v in graph.edges
+            if tuple(sorted((u, v))) not in channel_edges
+        ]
+        if remaining_edges:
+            nx.draw_networkx_edges(
+                graph,
+                pos=pos,
+                ax=ax,
+                edgelist=remaining_edges,
+                edge_color="#9ca3af",
+                width=1.0,
+                alpha=0.25,
+            )
+
+        # Draw channel edges on top, colored by channel group.
+        if pair_edges:
+            nx.draw_networkx_edges(
+                graph,
+                pos=pos,
+                ax=ax,
+                edgelist=pair_edges,
+                edge_color=pair_colors,
+                width=1.8,
+                alpha=0.9,
+            )
+        if clique_edges:
+            nx.draw_networkx_edges(
+                graph,
+                pos=pos,
+                ax=ax,
+                edgelist=clique_edges,
+                edge_color=clique_colors,
+                width=2.8,
+                alpha=0.95,
+            )
+
+        nx.draw_networkx_nodes(graph, pos=pos, ax=ax, node_size=node_size, node_color="#93c5fd")
+        if with_labels:
+            nx.draw_networkx_labels(graph, pos=pos, ax=ax, font_size=font_size)
+
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
