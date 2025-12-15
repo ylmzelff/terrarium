@@ -91,7 +91,7 @@ def prepare_simulation_config(base_config: Dict[str, Any], seed: int) -> Dict[st
     """
     Prepare a simulation config with the specified seed.
 
-    Creates a copy of the base config and injects the seed into the environment section.
+    Creates a copy of the base config and injects the seed into the simulation section.
     This ensures each simulation run has the correct seed for reproducibility.
 
     Args:
@@ -99,13 +99,12 @@ def prepare_simulation_config(base_config: Dict[str, Any], seed: int) -> Dict[st
         seed: Random seed for this simulation
 
     Returns:
-        New config dictionary with seed injected into environment.rng_seed
+        New config dictionary with seed injected into simulation.seed
     """
     import copy
     # Deep copy to avoid modifying the original config (important for parallel runs)
     sim_config = copy.deepcopy(base_config)
-    sim_config["environment"]["rng_seed"] = seed
-    sim_config["_current_seed"] = seed  # Track current seed at top level for convenience
+    sim_config["simulation"]["seed"] = seed
     return sim_config
 
 
@@ -120,16 +119,22 @@ def validate_config(config: Dict[str, Any]) -> None:
         ValueError: If config structure is invalid or missing required sections
     """
     # Validate required top-level sections
-    required_sections = ["simulation", "environment", "llm"]
+    required_sections = ["simulation", "environment", "communication_network", "llm"]
     missing_sections = [section for section in required_sections if section not in config]
     if missing_sections:
         raise ValueError(f"Config missing required sections: {missing_sections}")
 
     # Validate simulation section
-    required_sim_keys = ["max_iterations", "max_planning_rounds"]
+    required_sim_keys = ["max_iterations", "max_planning_rounds", "seed"]
     missing_sim_keys = [key for key in required_sim_keys if key not in config["simulation"]]
     if missing_sim_keys:
         raise ValueError(f"Simulation section missing required keys: {missing_sim_keys}")
+
+    # Validate communication_network section
+    required_comm_keys = ["topology", "num_agents"]
+    missing_comm_keys = [key for key in required_comm_keys if key not in config["communication_network"]]
+    if missing_comm_keys:
+        raise ValueError(f"Communication network section missing required keys: {missing_comm_keys}")
 
     # Validate LLM section
     if "provider" not in config["llm"]:
