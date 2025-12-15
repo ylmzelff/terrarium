@@ -1,7 +1,9 @@
 """
-Agent factory to build agents based on provider configuration. It simply 
+Agent factory to build agents based on provider configuration.
+
 Centralises agent construction for runner scripts.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,9 +32,7 @@ def build_agents(
     vllm_runtime: Any = None,
     shuffle: bool = True,
 ) -> List[BaseAgent]:
-    """
-    Build a list of Agents (or Agent subclasses) given agent names and provider config.
-    """
+    """Build a list of Agents (or Agent subclasses) given agent names and provider config."""
     if not issubclass(agent_cls, BaseAgent):
         raise TypeError(f"agent_cls must be a subclass of BaseAgent, got: {agent_cls}")
 
@@ -85,3 +85,4 @@ def build_agents(
         random.shuffle(agents)
 
     return agents
+

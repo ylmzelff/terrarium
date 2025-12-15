@@ -19,7 +19,7 @@ from datetime import datetime
 import traceback
 
 from src.communication_protocols.sequential import SequentialCommunicationProtocol
-from src.agent_factory import build_agents
+from src.agents.agent_factory import build_agents
 from src.networks import build_communication_network
 from src.utils import (
     configure_logging,
