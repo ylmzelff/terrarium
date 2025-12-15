@@ -48,8 +48,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         self.full_config = config
         self.env_config: Dict[str, Any] = config["environment"]
         self.simulation_config = config["simulation"]
-        # Get the correct seed from environment config
-        self.current_seed = self.env_config.get("rng_seed", 42)
+        # Get the correct seed from simulation config
+        self.current_seed = int(self.simulation_config["seed"])
 
         # Instance management
         # Partial joint assignment: variable_name -> chosen outfit number (1-based)
@@ -68,7 +68,11 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance -------------------------------------------------
-        num_agents = self.env_config.get("num_agents", self.env_config.get("n_agents", 3))
+        network_cfg = config.get("communication_network") or {}
+        assert network_cfg is not None and network_cfg != {}, "communication_network config must be specified"
+        num_agents = network_cfg.get("num_agents")
+        assert num_agents is not None and type(num_agents) == int, "communication_network.num_agents in config must be specified as an integer"
+
         min_outfits = self.env_config.get("min_outfits_per_agent", 4)
         max_outfits = self.env_config.get("max_outfits_per_agent", 6)
         density = self.env_config.get("density")
@@ -117,23 +121,8 @@ class PersonalAssistantEnvironment(AbstractEnvironment):
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
 
     async def async_init(self):
-        """Async initialization - create communication blackboards."""
-        await self.create_comm_network()
-
-    async def create_comm_network(self):
-        """Create communication blackboards for multi‑agent coordination factors."""
-        for factor in self.problem.factors:
-            owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
-            if len(owners) < 2:
-                logger.warning(
-                    "Skipping blackboard creation for factor with less than 2 participants "
-                    f"(owners={sorted(owners)}, scope={list(getattr(factor, 'scope', []))})"
-                )
-                continue
-
-            context = factor.description or "Coordination required between agents."
-            blackboard_id = await self.communication_protocol.generate_comm_network(list(owners), context)
-            logger.info("Created %s Blackboard %s: %s", self.__class__.__name__, blackboard_id, list(owners))
+        """Async initialization - create communication blackboards from the supplied network."""
+        await super().async_init()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """

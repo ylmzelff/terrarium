@@ -71,7 +71,7 @@ class TradingGameEnvironment(AbstractEnvironment):
         self.run_timestamp = get_run_timestamp(self.full_config)
 
         # Extract and store seed for reproducibility
-        self.seed = self.full_config.get("_current_seed", self.env_config.get("rng_seed", 42))
+        self.seed = int(self.full_config["simulation"]["seed"])
 
         # Initialize store with seed for reproducible inventory
         self.store = Store(seed=self.seed)

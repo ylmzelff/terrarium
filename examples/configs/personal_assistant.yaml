@@ -2,17 +2,25 @@ simulation:
   max_iterations: 1
   max_planning_rounds: 3
   max_conversation_steps: 3
+  seed: 42
   tags:
     - baseline
   note: ""
 environment:
-  name: PersonalAssistant
+  name: PersonalAssistantEnvironment
   # CoLLAB v2 PersonalAssistant (wardrobe coordination)
-  num_agents: 6
   density: 0.3
-  rng_seed: 42
   min_outfits_per_agent: 3
   max_outfits_per_agent: 4
+communication_network:
+  # Topology used to create blackboards (one blackboard per edge).
+  # Options: complete | path | star | random
+  # random requires `edge_prob` (0..1) and uses `simulation.seed`
+  topology: complete
+  num_agents: 6
+  # consolidate_channels=false => one blackboard per edge
+  # consolidate_channels=true => one blackboard per clique (plus leftover edges)
+  consolidate_channels: false
 llm:
   # Provider: "openai", "anthropic", "gemini", or "vllm"
   provider: "openai"
@@ -57,7 +65,7 @@ llm:
 notes:
 - PersonalAssistant baseline configuration (no attacks)
 - Environment generates outfit coordination factors between agents
-- Agents coordinate via blackboards during planning phase
+- Communication graph determines which blackboards exist (one per edge)
 - Final outfit selection happens during execution phase
 - Simulation stops when all constraints satisfied or max iterations reached
 - Generate n=30 instances and average results for evaluation

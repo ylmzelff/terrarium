@@ -32,8 +32,6 @@ def build_agents(
 ) -> List[BaseAgent]:
     """
     Build a list of Agents (or Agent subclasses) given agent names and provider config.
-
-    This keeps runner scripts thin while avoiding environment<->LLM coupling.
     """
     if not issubclass(agent_cls, BaseAgent):
         raise TypeError(f"agent_cls must be a subclass of BaseAgent, got: {agent_cls}")
@@ -50,7 +48,7 @@ def build_agents(
         agent_cls.__module__,
         getattr(agent_cls, "__qualname__", agent_cls.__name__),
     )
-    logger.info("Agent factory environment=%s", environment_name)
+    logger.info("Agent factory using environment=%s", environment_name)
 
     agents: List[BaseAgent] = []
     for name in agent_names:

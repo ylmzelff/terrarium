@@ -22,6 +22,7 @@ from src.agents.base import BaseAgent
 from src.agent_factory import build_agents
 from src.communication_protocols.sequential import SequentialCommunicationProtocol
 from src.logger import ToolCallLogger, AgentTrajectoryLogger
+from src.networks import build_communication_network
 from src.utils import (
     configure_logging,
     load_config,
@@ -58,7 +59,7 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
     """
     vllm_runtime = None
     try:
-        seed = config["environment"]["rng_seed"]
+        seed = config["simulation"]["seed"]
         run_timestamp = config.get("simulation", {}).get("run_timestamp")
         if not run_timestamp:
             run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -85,12 +86,13 @@ async def run_simulation(config: Dict[str, Any]) -> bool:
             result = await client.call_tool("initialize_environment_tools", {"environment_name": env_class_name})
             print(f"MCP server environment tools: {result.data}")
 
+        agent_names = environment.get_agent_names()
+        communication_network = build_communication_network(agent_names, config)
+        environment.set_communication_network(communication_network)
+
         # Reset tool call log for new simulation
         environment.tool_logger.reset_log()
         await environment.async_init()
-
-        # Initialize agents
-        agent_names = environment.get_agent_names()
 
         # Get provider and model name
         llm_config = config["llm"]

@@ -43,8 +43,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.full_config = config
         self.env_config: Dict[str, Any] = config["environment"]
         self.simulation_config: Dict[str, Any] = config["simulation"]
-        # Get the correct seed from environment config (matches what's used for instance generation)
-        self.current_seed = self.env_config.get("rng_seed", 42)
+        # Get the correct seed from simulation config (matches what's used for instance generation)
+        self.current_seed = int(self.simulation_config["seed"])
 
         # Instance management
         # Partial joint assignment: variable_name -> chosen interval (e.g., "3-5" or "skip")
@@ -61,7 +61,11 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance -------------------------------------------------
-        num_agents = self.env_config.get("num_agents", self.env_config.get("n_agents", 8))
+        network_cfg = config.get("communication_network") or {}
+        assert network_cfg is not None and network_cfg != {}, "communication_network config must be specified"
+        num_agents = network_cfg.get("num_agents")
+        assert num_agents is not None and type(num_agents) == int, "communication_network.num_agents in config must be specified as an integer"
+
         num_meetings = self.env_config.get("num_meetings", self.env_config.get("n_meetings", 6))
         timeline_length = self.env_config.get("timeline_length", 12)
         min_participants = self.env_config.get("min_participants", 2)
@@ -108,33 +112,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         logger.info("Total meetings to schedule: %s", len(self.instance.meetings))
 
     async def async_init(self):
-        await self.create_comm_network()
-
-    async def create_comm_network(self):
-        """Create communication blackboards for each multi‑agent meeting."""
-        # Create one blackboard per meeting (all participants coordinate there)
-        for meeting in self.instance.meetings:
-            participants = list(meeting.participants)
-            if len(participants) < 2:
-                logger.warning(
-                    "Skipping blackboard creation for meeting %s with less than 2 participants",
-                    meeting.meeting_id,
-                )
-                continue
-
-            context = (
-                f"Meeting {meeting.meeting_id}: {meeting.title} ({meeting.meeting_type}) "
-                f"window [{meeting.start}, {meeting.end}). Participants: {', '.join(participants)}. "
-                "Coordinate attendance intervals to maximise overlaps for soft meetings, "
-                "fully attend strict meetings, and avoid double‑booking."
-            )
-            blackboard_id = await self.communication_protocol.generate_comm_network(participants, context)
-            logger.info(
-                "Created Meeting Blackboard %s: %s for %s",
-                blackboard_id,
-                participants,
-                meeting.meeting_id,
-            )
+        await super().async_init()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """

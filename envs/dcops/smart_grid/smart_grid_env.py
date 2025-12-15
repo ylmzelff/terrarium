@@ -52,7 +52,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         self.max_iterations = self.simulation_config.get("max_iterations", None)
         self.max_planning_rounds = self.simulation_config.get("max_planning_rounds", None)
 
-        self.current_seed = self.env_config.get("rng_seed", 42)
+        self.current_seed = int(self.simulation_config["seed"])
 
         # Partial joint assignment: machine_id -> source_id
         self.assignment: Dict[str, Any] = {}
@@ -62,7 +62,11 @@ class SmartGridEnvironment(AbstractEnvironment):
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
         # ---- Build CoLLAB v2 instance ---------------------------------------------
-        num_agents = self.env_config.get("num_agents", self.env_config.get("n_homes", 6))
+        network_cfg = config.get("communication_network") or {}
+        assert network_cfg is not None and network_cfg != {}, "communication_network config must be specified"
+        num_agents = network_cfg.get("num_agents")
+        assert num_agents is not None and type(num_agents) == int, "communication_network.num_agents in config must be specified as an integer"
+
         timeline_length = self.env_config.get("timeline_length", self.env_config.get("T", 24))
 
         tasks_per_home = self.env_config.get("tasks_per_home", (3, 6))
@@ -109,22 +113,7 @@ class SmartGridEnvironment(AbstractEnvironment):
         logger.info("Timeline length: %s slots", self.instance.timeline_length)
 
     async def async_init(self):
-        await self.create_comm_network()
-
-    async def create_comm_network(self):
-        """Create a single global blackboard for all agents."""
-
-        context = (
-            "Smart Grid Coordination: All sites share renewable sources and must coordinate "
-            f"assignments over {self.instance.timeline_length} time slots to minimise overflow "
-            "to the main grid."
-        )
-        blackboard_id = await self.communication_protocol.generate_comm_network(self.agent_names, context)
-        logger.info(
-            "Created Global Power Grid Blackboard %s: %s",
-            blackboard_id,
-            ", ".join(self.agent_names),
-        )
+        await super().async_init()
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         if phase == "planning" and iteration > 1 and self.assignment:

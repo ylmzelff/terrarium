@@ -144,15 +144,22 @@ def validate_config(config: Dict[str, Any]) -> None:
     if "name" not in config["environment"]:
         raise ValueError("Environment section missing required key: name")
 
-    # Validate DCOP environments have exactly 1 iteration
-    dcop_environments = ["MeetingScheduling", "PersonalAssistant", "SmartGrid"]
-    if config["environment"]["name"] in dcop_environments:
-        max_iterations = config["simulation"].get("max_iterations", 3)
-        if max_iterations != 1:
-            raise ValueError(
-                f"DCOP environment '{config['environment']['name']}' requires "
-                f"max_iterations=1 in simulation config, but got {max_iterations}"
-            )
+    # Validate environment name points to an implemented environment class.
+    env_name = config["environment"]["name"]
+    implemented = set(get_implemented_environment_names())
+    if env_name not in implemented:
+        raise ValueError(
+            f"Unknown environment.name={env_name!r}. "
+            f"Expected one of: {sorted(implemented)!r}."
+        )
+
+    # Validate environments have exactly 1 iteration
+    max_iterations = config["simulation"]["max_iterations"]
+    if max_iterations != 1:
+        raise ValueError(
+            f"Environment '{env_name}' requires "
+            f"max_iterations=1 in simulation config, but got {max_iterations}"
+        )
 
 
 def _sanitize_identifier(value: str) -> str:
@@ -428,13 +435,32 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, vllm")
 
 
+def _get_environment_registry():
+    """Return the mapping of implemented environment class names -> classes."""
+    # Import here to avoid circular dependencies / heavy imports at module import time.
+    from envs.dcops.personal_assistant import PersonalAssistantEnvironment
+    from envs.dcops.smart_grid import SmartGridEnvironment
+    from envs.dcops.meeting_scheduling import MeetingSchedulingEnvironment
+
+    return {
+        MeetingSchedulingEnvironment.__name__: MeetingSchedulingEnvironment,
+        PersonalAssistantEnvironment.__name__: PersonalAssistantEnvironment,
+        SmartGridEnvironment.__name__: SmartGridEnvironment,
+    }
+
+
+def get_implemented_environment_names() -> List[str]:
+    """Return the list of supported `environment.name` values."""
+    return sorted(_get_environment_registry().keys())
+
+
 def create_environment(protocol, environment_name: str, config, tool_logger) -> "AbstractEnvironment":
     """
     Create environment instance based on name.
 
     Args:
         protocol: Communication protocol instance
-        environment_name: Name of the environment to create
+        environment_name: Environment class name (matches config `environment.name`)
         config: Configuration dictionary
         tool_logger: Tool call logger instance
 
@@ -444,21 +470,14 @@ def create_environment(protocol, environment_name: str, config, tool_logger) -> 
     Raises:
         ValueError: If environment name is unknown
     """
-    # Import here to avoid circular dependencies
-    from envs.negotiation.trading import TradingGameEnvironment
-    from envs.dcops.personal_assistant import PersonalAssistantEnvironment
-    from envs.dcops.smart_grid import SmartGridEnvironment
-    from envs.dcops.meeting_scheduling import MeetingSchedulingEnvironment
-
-    environments = {
-        "PersonalAssistant": PersonalAssistantEnvironment,
-        "Trading": TradingGameEnvironment,
-        "SmartGrid": SmartGridEnvironment,
-        "MeetingScheduling": MeetingSchedulingEnvironment,
-    }
-    if environment_name not in environments:
-        raise ValueError(f"Unknown environment: {environment_name}")
-    return environments[environment_name](protocol, config, tool_logger)
+    environments = _get_environment_registry()
+    env_cls = environments.get(environment_name)
+    if env_cls is None:
+        raise ValueError(
+            f"Unknown environment.name={environment_name!r}. "
+            f"Expected one of: {sorted(environments.keys())!r}."
+        )
+    return env_cls(protocol, config, tool_logger)
 
 
 def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:

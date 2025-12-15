@@ -2,19 +2,27 @@ simulation:
   max_iterations: 1
   max_planning_rounds: 3
   max_conversation_steps: 3
+  seed: 42
   tags:
     - baseline
   note: ""
 environment:
-  name: SmartGrid
+  name: SmartGridEnvironment
   # CoLLAB v2 SmartGrid (renewable source allocation)
-  num_agents: 8
   timeline_length: 24
   min_machines_per_agent: 2
   max_machines_per_agent: 4
   min_sources_per_agent: 2
   max_sources_per_agent: 3
-  rng_seed: 42
+communication_network:
+  # Topology used to create blackboards (one blackboard per edge).
+  # Options: complete | path | star | random
+  # random requires `edge_prob` (0..1) and uses `simulation.seed`
+  topology: complete
+  num_agents: 8
+  # consolidate_channels=false => one blackboard per edge
+  # consolidate_channels=true => one blackboard per clique (plus leftover edges)
+  consolidate_channels: false
 llm:
   # Provider: "openai", "anthropic", "gemini", or "vllm"
   provider: "openai"
@@ -58,7 +66,7 @@ llm:
           - "--enable-auto-tool-choice"
 notes:
 - SmartGrid baseline configuration (no attacks)
-- SmartGrid creates a single global blackboard for all agents to coordinate assignments
+- SmartGrid uses a configured communication graph to create blackboards (one per edge)
 - Agents assign each owned machine to a shared renewable source
 - Coordinate via blackboards to minimize overflow to the main grid
 - Each agent controls 2-4 machines with fixed operating windows
