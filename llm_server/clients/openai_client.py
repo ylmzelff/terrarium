@@ -201,3 +201,4 @@ class OpenAIClient(AbstractClient):
                 # Add message output to context (already a proper response output object)
                 context.append(output)
         return tool_calls_executed, context, step_tools
+
