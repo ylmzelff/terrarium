@@ -217,6 +217,83 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return total_reward, local_rewards
 
 
+    def _generate_availability_slots(self) -> Dict[str, List[int]]:
+        """
+        Generate agent availability slots based on meeting assignments.
+        
+        Creates a 1D binary array for each agent where:
+        - 1 = Available (agent has meetings in this time slot)
+        - 0 = Unavailable (agent has no meetings in this time slot)
+        """
+        timeline_length = self.instance.timeline_length
+        agent_slots = {}
+        
+        # Only process first 2 agents for cleaner visualization
+        agents_to_process = self.agent_names[:2] if len(self.agent_names) >= 2 else self.agent_names
+        
+        for agent_name in agents_to_process:
+            # Initialize all slots as unavailable (0)
+            slots = [0] * timeline_length
+            
+            # Mark slots as available (1) if agent has meetings in those time slots
+            for meeting in self.instance.meetings:
+                if agent_name in meeting.participants:
+                    # Mark the meeting window as available
+                    for t in range(meeting.start, meeting.end):
+                        if 0 <= t < timeline_length:
+                            slots[t] = 1
+            
+            agent_slots[agent_name] = slots
+        
+        return agent_slots
+
+    def _log_availability_table(self) -> None:
+        """
+        Log agent availability table to blackboard during planning phase.
+        
+        This method extracts availability data from meeting assignments and
+        formats it as a table for visualization in the blackboard logs.
+        """
+        try:
+            # Get availability data from meeting windows
+            agent_slots = self._generate_availability_slots()
+            
+            # Only log if we have at least 2 agents
+            if len(agent_slots) < 2:
+                logger.warning("Need at least 2 agents for availability table, found %d", len(agent_slots))
+                return
+            
+            # Get megaboard from communication protocol
+            megaboard = self.communication_protocol.megaboard
+            if not megaboard.blackboards:
+                logger.warning("No blackboards available for availability logging")
+                return
+            
+            # Use first blackboard (typically the main coordination channel)
+            blackboard_id = 0
+            
+            # Determine grid dimensions
+            # For meeting scheduling, treat timeline as 1 day with timeline_length slots
+            timeline_length = self.instance.timeline_length
+            num_days = 1
+            num_slots_per_day = timeline_length
+            
+            # Log to blackboard
+            megaboard.log_availability_table(
+                blackboard_id=blackboard_id,
+                agent_slots=agent_slots,
+                num_days=num_days,
+                num_slots_per_day=num_slots_per_day,
+                phase="planning"
+            )
+            
+            logger.info("✓ Logged availability table to blackboard %d for agents: %s", 
+                       blackboard_id, ", ".join(agent_slots.keys()))
+            
+        except Exception as e:
+            logger.error("Failed to log availability table: %s", e, exc_info=True)
+
+
     def log_iteration(self, iteration: int) -> None:
         """
         Log the current state of the environment.
@@ -225,6 +302,11 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             iteration: Current iteration number
         """
         logger.info("=== %s State - Iteration %s ===", self.__class__.__name__, iteration)
+        
+        # Log availability table at start of planning phase (iteration 1)
+        if iteration == 1 and hasattr(self.communication_protocol, 'megaboard'):
+            self._log_availability_table()
+        
         total_vars = len(self.problem.variables)
         logger.info("Variables: %s total, %s assigned", total_vars, len(self.assignment))
 

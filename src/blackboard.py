@@ -193,6 +193,28 @@ class Megaboard:
 
         return event_id
 
+    def log_availability_table(self, blackboard_id: int, agent_slots: Dict[str, List[int]], 
+                              num_days: int = 1, num_slots_per_day: int = 12,
+                              phase: str = "Planning") -> None:
+        """
+        Format and log the availability table to the specified blackboard.
+        """
+        try:
+            from src.availability_formatter import format_availability_table
+            formatted_table = format_availability_table(agent_slots, num_days, num_slots_per_day, phase)
+            
+            payload = {
+                "message": formatted_table,
+                "type": "availability_table",
+                "data": agent_slots
+            }
+            
+            # Post as a system message with 'context' kind so it appears in initial context
+            self.post_system_message(blackboard_id, kind="context", payload=payload, phase=phase, iteration=0)
+            
+        except Exception as e:
+            print(f"Error logging availability table: {e}")
+
     def get(self, blackboard_id: int, agent: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get recent events from the blackboard for the specified agent.
