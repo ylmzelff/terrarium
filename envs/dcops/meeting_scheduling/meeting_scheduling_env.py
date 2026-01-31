@@ -119,6 +119,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     async def async_init(self):
         await super().async_init()
+        # Log availability table at initialization, BEFORE any planning rounds start
+        # This ensures the table appears in agent prompts from the first round
+        await self._async_log_availability_table()
+        logger.info("✓ Availability table logged during async_init")
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
@@ -253,9 +257,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         return agent_slots
 
-    def _log_availability_table(self) -> None:
+    async def _async_log_availability_table(self) -> None:
         """
-        Log agent availability table to blackboard during planning phase.
+        Log agent availability table to blackboard during planning phase via MCP.
         
         This method extracts availability data from meeting assignments and
         formats it as a table for visualization in the blackboard logs.
@@ -269,12 +273,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 logger.warning("Need at least 2 agents for availability table, found %d", len(agent_slots))
                 return
             
-            # Get megaboard from communication protocol
-            megaboard = self.communication_protocol.megaboard
-            if not megaboard.blackboards:
-                logger.warning("No blackboards available for availability logging")
-                return
-            
             # Use first blackboard (typically the main coordination channel)
             blackboard_id = 0
             
@@ -284,17 +282,17 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             num_days = 1
             num_slots_per_day = timeline_length
             
-            # Log to blackboard
-            megaboard.log_availability_table(
-                blackboard_id=blackboard_id,
-                agent_slots=agent_slots,
-                num_days=num_days,
-                num_slots_per_day=num_slots_per_day,
-                phase="planning"
-            )
-            
-            logger.info("✓ Logged availability table to blackboard %d for agents: %s", 
-                       blackboard_id, ", ".join(agent_slots.keys()))
+            # Log to blackboard via MCP
+            async with self.communication_protocol.mcp_client as client:
+                result = await client.call_tool("log_availability_table", {
+                    "blackboard_id": blackboard_id,
+                    "agent_slots": agent_slots,
+                    "num_days": num_days,
+                    "num_slots_per_day": num_slots_per_day,
+                    "phase": "planning"
+                })
+                logger.info("✓ Logged availability table to blackboard %d for agents: %s (result: %s)", 
+                           blackboard_id, ", ".join(agent_slots.keys()), result.data)
             
         except Exception as e:
             logger.error("Failed to log availability table: %s", e, exc_info=True)
@@ -308,10 +306,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             iteration: Current iteration number
         """
         logger.info("=== %s State - Iteration %s ===", self.__class__.__name__, iteration)
-        
-        # Log availability table at start of planning phase (iteration 1)
-        if iteration == 1 and hasattr(self.communication_protocol, 'megaboard'):
-            self._log_availability_table()
+        # Note: Availability table is now logged in async_init() before planning starts
         
         total_vars = len(self.problem.variables)
         logger.info("Variables: %s total, %s assigned", total_vars, len(self.assignment))
