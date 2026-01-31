@@ -9,9 +9,15 @@ the updated CoLLAB benchmark.
 """
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
-# CoLLAB v2 problem-layer imports (made available via envs.dcops.__init__)
-from problem_layer.meeting_scheduling import MeetingSchedulingConfig, generate_instance
-from problem_layer.base import ProblemDefinition
+# CoLLAB v2 problem-layer imports (with fallback for Colab/missing submodule)
+try:
+    from problem_layer.meeting_scheduling import MeetingSchedulingConfig, generate_instance
+    from problem_layer.base import ProblemDefinition
+except ImportError:
+    # Fallback to local minimal implementation
+    from src.simple_problem_layer import MeetingSchedulingConfig, generate_instance, SimpleProblem as ProblemDefinition
+    import logging
+    logging.getLogger(__name__).warning("⚠️ Using local fallback for problem_layer (external submodule missing)")
 
 import logging
 logger = logging.getLogger(__name__)

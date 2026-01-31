@@ -26,7 +26,7 @@ communication_network:
   consolidate_channels: true
 llm:
   # Provider: "openai", "anthropic", "gemini", "together", or "vllm"
-  provider: "together"
+  provider: "vllm"
   openai:
     model: "gpt-4.1-mini-2025-04-14"
     params:
@@ -55,21 +55,20 @@ llm:
     auto_start_server: true
     persistent_server: false  # Keep the vLLM server alive between runs to avoid cold starts
     health_check_path: "/models"
-    startup_timeout: 420 # When starting a new server, max time (s) to wait for it to be ready
+    startup_timeout: 600 # Increased for Colab (was 420)
     params:
       max_tokens: 1024
       temperature: 0.7
     models:
-      - checkpoint: "Qwen/Qwen2.5-7B-Instruct"
+      - checkpoint: "mistralai/Mistral-7B-Instruct-v0.3"
         host: "127.0.0.1"
         port: 8020
         tensor_parallel_size: 1
-        gpu_memory_utilization: 0.9
-        max_model_len: 16000
+        gpu_memory_utilization: 0.85
+        max_model_len: 8192
         trust_remote_code: true
-        additional_args:
-          # Will pick the correct parser per model family (e.g., mistral, qwen, hermes)
-          - "--enable-auto-tool-choice"
+        tool_call_parser: "mistral"
+        additional_args: []
 notes:
 - MeetingScheduling baseline configuration (no attacks)
 - MeetingScheduling always logs scores for each iteration

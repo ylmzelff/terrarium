@@ -16,8 +16,14 @@ import logging
 if TYPE_CHECKING:
     from src.agents.base import BaseAgent
 
-from problem_layer.smart_grid import SmartGridConfig, generate_instance
-from problem_layer.base import ProblemDefinition
+# CoLLAB v2 problem-layer imports (with fallback for Colab/missing submodule)
+try:
+    from problem_layer.smart_grid import SmartGridConfig, generate_instance
+    from problem_layer.base import ProblemDefinition
+except ImportError:
+    from src.simple_problem_layer import SmartGridConfig, generate_instance, SimpleProblem as ProblemDefinition
+    import logging
+    logging.getLogger(__name__).warning("⚠️ Using local fallback for problem_layer (external submodule missing)")
 
 from envs.abstract_environment import AbstractEnvironment
 from src.utils import (
