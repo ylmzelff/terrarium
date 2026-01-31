@@ -14,6 +14,9 @@ environment:
   min_participants: 2
   max_participants: 4
   soft_meeting_ratio: 0.6
+  # Availability table configuration
+  num_days: 1              # Number of days to show in availability table
+  slots_per_day: 12        # Number of time slots per day
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random

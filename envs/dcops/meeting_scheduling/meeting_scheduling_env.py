@@ -113,9 +113,14 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Initialize score tracking
         self.agent_rewards_history: Dict[str, List[float]] = {agent: [] for agent in self.agent_names}
 
+        # Availability table configuration (from config or defaults)
+        self.num_days = self.env_config.get("num_days", 1)
+        self.slots_per_day = self.env_config.get("slots_per_day", self.instance.timeline_length)
+
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
         logger.info("Total meetings to schedule: %s", len(self.instance.meetings))
+        logger.info("Availability table: %d days x %d slots/day", self.num_days, self.slots_per_day)
 
     async def async_init(self):
         await super().async_init()
@@ -234,23 +239,24 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         Creates a 1D binary array for each agent where:
         - 1 = Available (agent has meetings in this time slot)
         - 0 = Unavailable (agent has no meetings in this time slot)
+        
+        The total slots = num_days * slots_per_day (from config)
         """
-        timeline_length = self.instance.timeline_length
+        # Use configured values for table dimensions
+        total_slots = self.num_days * self.slots_per_day
         agent_slots = {}
         
-        # Only process first 2 agents for cleaner visualization
-        agents_to_process = self.agent_names[:2] if len(self.agent_names) >= 2 else self.agent_names
-        
-        for agent_name in agents_to_process:
+        # Process all agents (removed 2-agent limit for more flexibility)
+        for agent_name in self.agent_names:
             # Initialize all slots as unavailable (0)
-            slots = [0] * timeline_length
+            slots = [0] * total_slots
             
             # Mark slots as available (1) if agent has meetings in those time slots
             for meeting in self.instance.meetings:
                 if agent_name in meeting.participants:
                     # Mark the meeting window as available
                     for t in range(meeting.start, meeting.end):
-                        if 0 <= t < timeline_length:
+                        if 0 <= t < total_slots:
                             slots[t] = 1
             
             agent_slots[agent_name] = slots
@@ -263,6 +269,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         This method extracts availability data from meeting assignments and
         formats it as a table for visualization in the blackboard logs.
+        Uses num_days and slots_per_day from config.
         """
         try:
             # Get availability data from meeting windows
@@ -276,11 +283,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             # Use first blackboard (typically the main coordination channel)
             blackboard_id = 0
             
-            # Determine grid dimensions
-            # For meeting scheduling, treat timeline as 1 day with timeline_length slots
-            timeline_length = self.instance.timeline_length
-            num_days = 1
-            num_slots_per_day = timeline_length
+            # Use configured grid dimensions
+            num_days = self.num_days
+            num_slots_per_day = self.slots_per_day
             
             # Log to blackboard via MCP
             async with self.communication_protocol.mcp_client as client:
@@ -291,8 +296,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                     "num_slots_per_day": num_slots_per_day,
                     "phase": "planning"
                 })
-                logger.info("✓ Logged availability table to blackboard %d for agents: %s (result: %s)", 
-                           blackboard_id, ", ".join(agent_slots.keys()), result.data)
+                logger.info("✓ Logged availability table (%d days x %d slots) to blackboard %d for agents: %s", 
+                           num_days, num_slots_per_day, blackboard_id, ", ".join(agent_slots.keys()))
             
         except Exception as e:
             logger.error("Failed to log availability table: %s", e, exc_info=True)
