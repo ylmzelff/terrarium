@@ -133,7 +133,7 @@ def log_availability_table(blackboard_id: int, agent_slots: Dict[str, List[int]]
                           num_days: int = 1, num_slots_per_day: int = 12,
                           phase: str = "planning",
                           meeting_intersections: Optional[Dict[str, List[int]]] = None,
-                          meeting_info: Optional[Dict[str, Dict[str, any]]] = None) -> Dict[str, str]:
+                          meeting_info: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, str]:
     """Log an availability table to the specified blackboard with optional meeting intersections."""
     import logging
     logger = logging.getLogger(__name__)

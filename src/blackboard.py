@@ -197,7 +197,7 @@ class Megaboard:
                               num_days: int = 1, num_slots_per_day: int = 12,
                               phase: str = "planning",
                               meeting_intersections: Dict[str, List[int]] = None,
-                              meeting_info: Dict[str, Dict[str, any]] = None) -> None:
+                              meeting_info: Dict[str, Dict[str, Any]] = None) -> None:
         """
         Format and log the availability table to the specified blackboard.
         Includes meeting-specific intersection tables if provided.

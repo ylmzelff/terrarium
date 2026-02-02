@@ -16,7 +16,7 @@ class GeminiClient(AbstractClient):
     Client for using Google Gemini API for LLM agents.
 
     Provides the same interface as other clients but uses Google's Generative AI API.
-    Supports Gemini models including gemini-2.0-flash-exp, gemini-1.5-pro, etc.
+    Supports Gemini models including gemini-1.5-flash, gemini-1.5-pro, gemini-pro, etc.
     """
 
     def __init__(self):
@@ -130,7 +130,7 @@ class GeminiClient(AbstractClient):
         Args:
             input: List of message dictionaries in Gemini format
             params: Generation parameters including:
-                - model: Model name (e.g., "gemini-2.0-flash-exp")
+                - model: Model name (e.g., "gemini-1.5-flash")
                 - max_tokens: Maximum tokens to generate (max_output_tokens in Gemini)
                 - temperature: Sampling temperature
                 - tools: List of tool definitions
@@ -140,7 +140,7 @@ class GeminiClient(AbstractClient):
             Tuple of (response_object, response_text)
         """
         # Extract parameters
-        model_name = params.get("model", "gemini-2.0-flash-exp")
+        model_name = params.get("model", "gemini-1.5-flash")
         max_tokens = params.get("max_tokens") or params.get("max_output_tokens", 1000)
         temperature = params.get("temperature", 0.7)
         tools = params.get("tools", [])
