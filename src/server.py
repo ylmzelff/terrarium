@@ -133,10 +133,15 @@ def log_availability_table(blackboard_id: int, agent_slots: Dict[str, List[int]]
                           num_days: int = 1, num_slots_per_day: int = 12,
                           phase: str = "planning") -> Dict[str, str]:
     """Log an availability table to the specified blackboard."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         megaboard.log_availability_table(blackboard_id, agent_slots, num_days, num_slots_per_day, phase)
+        logger.info("MCP tool: Successfully logged availability table to blackboard %d", blackboard_id)
         return {"status": "success", "message": f"Availability table logged to blackboard {blackboard_id}"}
     except Exception as e:
+        logger.error("MCP tool: Failed to log availability table: %s", e, exc_info=True)
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()

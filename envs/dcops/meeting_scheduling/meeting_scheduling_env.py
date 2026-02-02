@@ -237,27 +237,55 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         Generate agent availability slots based on meeting assignments.
         
         Creates a 1D binary array for each agent where:
-        - 1 = Available (agent has meetings in this time slot)
-        - 0 = Unavailable (agent has no meetings in this time slot)
+        - 1 = Available/Free (agent has NO meetings in this time slot)
+        - 0 = Busy/In Meeting (agent has meetings in this time slot)
         
         The total slots = num_days * slots_per_day (from config)
+        
+        Returns:
+            Dictionary mapping agent names to their availability lists
         """
+        from src.availability import AvailabilityConstants
+        
         # Use configured values for table dimensions
         total_slots = self.num_days * self.slots_per_day
         agent_slots = {}
         
-        # Process all agents (removed 2-agent limit for more flexibility)
+        # Process all agents
         for agent_name in self.agent_names:
-            # Initialize all slots as unavailable (0)
-            slots = [0] * total_slots
+            # Initialize all slots as available (1) - agent is free by default
+            slots = [AvailabilityConstants.AVAILABLE] * total_slots
             
-            # Mark slots as available (1) if agent has meetings in those time slots
+            # Mark slots as busy (0) if agent has meetings in those time slots
             for meeting in self.instance.meetings:
                 if agent_name in meeting.participants:
-                    # Mark the meeting window as available
+                    # Validate meeting boundaries
+                    if meeting.start < 0 or meeting.end < 0:
+                        logger.warning(
+                            "Meeting %s has negative time boundaries: [%d, %d)",
+                            getattr(meeting, 'meeting_id', 'unknown'),
+                            meeting.start, meeting.end
+                        )
+                        continue
+                    
+                    if meeting.start >= meeting.end:
+                        logger.warning(
+                            "Meeting %s has invalid time range: [%d, %d)",
+                            getattr(meeting, 'meeting_id', 'unknown'),
+                            meeting.start, meeting.end
+                        )
+                        continue
+                    
+                    # Mark the meeting window as busy (0)
                     for t in range(meeting.start, meeting.end):
                         if 0 <= t < total_slots:
-                            slots[t] = 1
+                            slots[t] = AvailabilityConstants.BUSY
+                        elif t >= total_slots:
+                            logger.warning(
+                                "Meeting %s extends beyond timeline: slot %d >= %d",
+                                getattr(meeting, 'meeting_id', 'unknown'),
+                                t, total_slots
+                            )
             
             agent_slots[agent_name] = slots
         
@@ -265,42 +293,76 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     async def _async_log_availability_table(self) -> None:
         """
-        Log agent availability table to blackboard during planning phase via MCP.
+        Log agent availability table to all relevant blackboards during planning phase via MCP.
         
         This method extracts availability data from meeting assignments and
         formats it as a table for visualization in the blackboard logs.
         Uses num_days and slots_per_day from config.
+        
+        Logs to all blackboards where at least one agent is a participant.
         """
+        from src.availability import AvailabilityConstants
+        
         try:
             # Get availability data from meeting windows
             agent_slots = self._generate_availability_slots()
             
-            # Only log if we have at least 2 agents
-            if len(agent_slots) < 2:
-                logger.warning("Need at least 2 agents for availability table, found %d", len(agent_slots))
+            if not agent_slots:
+                logger.warning("No agent availability data to log")
                 return
             
-            # Use first blackboard (typically the main coordination channel)
-            blackboard_id = 0
+            # Get all blackboards
+            blackboards = self.communication_protocol.megaboard.blackboards
             
-            # Use configured grid dimensions
-            num_days = self.num_days
-            num_slots_per_day = self.slots_per_day
+            if not blackboards:
+                logger.warning("No blackboards available for logging availability table")
+                return
             
-            # Log to blackboard via MCP
-            async with self.communication_protocol.mcp_client as client:
-                result = await client.call_tool("log_availability_table", {
-                    "blackboard_id": blackboard_id,
-                    "agent_slots": agent_slots,
-                    "num_days": num_days,
-                    "num_slots_per_day": num_slots_per_day,
-                    "phase": "planning"
-                })
-                logger.info("✓ Logged availability table (%d days x %d slots) to blackboard %d for agents: %s", 
-                           num_days, num_slots_per_day, blackboard_id, ", ".join(agent_slots.keys()))
+            logged_count = 0
+            
+            # Log to each blackboard with relevant agents
+            for blackboard in blackboards:
+                blackboard_id = int(blackboard.blackboard_id)
+                
+                # Filter agents that are participants in this blackboard
+                relevant_agents = [a for a in agent_slots.keys() if a in blackboard.agents]
+                
+                if not relevant_agents:
+                    continue
+                
+                # Create filtered agent slots for this blackboard
+                filtered_slots = {agent: agent_slots[agent] for agent in relevant_agents}
+                
+                # Log to blackboard via MCP
+                async with self.communication_protocol.mcp_client as client:
+                    result = await client.call_tool("log_availability_table", {
+                        "blackboard_id": blackboard_id,
+                        "agent_slots": filtered_slots,
+                        "num_days": self.num_days,
+                        "num_slots_per_day": self.slots_per_day,
+                        "phase": AvailabilityConstants.PHASE_PLANNING
+                    })
+                    
+                    if result.get("status") == "success":
+                        logged_count += 1
+                        logger.info(
+                            "✓ Logged availability table (%d days x %d slots) to blackboard %d for agents: %s",
+                            self.num_days, self.slots_per_day, blackboard_id, ", ".join(relevant_agents)
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to log to blackboard %d: %s", 
+                            blackboard_id, result.get("message", "Unknown error")
+                        )
+            
+            if logged_count == 0:
+                logger.warning("Availability table was not logged to any blackboard")
+            else:
+                logger.info("Successfully logged availability table to %d blackboard(s)", logged_count)
             
         except Exception as e:
             logger.error("Failed to log availability table: %s", e, exc_info=True)
+            raise
 
 
     def log_iteration(self, iteration: int) -> None:

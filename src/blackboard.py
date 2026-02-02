@@ -195,25 +195,55 @@ class Megaboard:
 
     def log_availability_table(self, blackboard_id: int, agent_slots: Dict[str, List[int]], 
                               num_days: int = 1, num_slots_per_day: int = 12,
-                              phase: str = "Planning") -> None:
+                              phase: str = "planning") -> None:
         """
         Format and log the availability table to the specified blackboard.
+        
+        Args:
+            blackboard_id: ID of the blackboard to log to
+            agent_slots: Dictionary mapping agent names to availability lists
+            num_days: Number of days in the table
+            num_slots_per_day: Number of time slots per day
+            phase: Current phase (planning or execution)
+            
+        Raises:
+            Exception: Re-raises any exception after logging
         """
+        import logging
+        from src.availability import format_availability_table, AvailabilityConstants
+        
+        logger = logging.getLogger(__name__)
+        
         try:
-            from src.availability_formatter import format_availability_table
             formatted_table = format_availability_table(agent_slots, num_days, num_slots_per_day, phase)
             
             payload = {
                 "message": formatted_table,
-                "type": "availability_table",
+                "type": AvailabilityConstants.EVENT_TYPE,
                 "data": agent_slots
             }
             
             # Post as a system message with 'context' kind so it appears in initial context
-            self.post_system_message(blackboard_id, kind="context", payload=payload, phase=phase, iteration=0)
+            self.post_system_message(
+                blackboard_id, 
+                kind=AvailabilityConstants.EVENT_KIND, 
+                payload=payload, 
+                phase=phase, 
+                iteration=0
+            )
+            logger.info(
+                "Successfully logged availability table to blackboard %d (%d agents, %d slots)",
+                blackboard_id, len(agent_slots), num_days * num_slots_per_day
+            )
             
         except Exception as e:
-            print(f"Error logging availability table: {e}")
+            logger.error(
+                AvailabilityConstants.ERROR_MESSAGE_TEMPLATE.format(
+                    blackboard_id=blackboard_id, error=str(e)
+                ),
+                exc_info=True
+            )
+            raise
 
     def get(self, blackboard_id: int, agent: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
