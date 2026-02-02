@@ -291,6 +291,46 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         return agent_slots
 
+    def _generate_meeting_intersections(self, agent_slots: Dict[str, List[int]]) -> Dict[str, List[int]]:
+        """
+        Generate intersection (common availability) for each meeting's participants.
+        
+        For each meeting, computes slots where ALL participants are available (1).
+        Uses AND operation: slot is 1 only if all participants have 1 in that slot.
+        
+        Args:
+            agent_slots: Dictionary mapping agent names to their availability lists
+            
+        Returns:
+            Dictionary mapping meeting IDs to intersection availability lists
+        """
+        from src.availability import AvailabilityConstants
+        
+        meeting_intersections = {}
+        total_slots = self.num_days * self.slots_per_day
+        
+        for meeting in self.instance.meetings:
+            # Get participants for this meeting who are in agent_slots
+            participants = [p for p in meeting.participants if p in agent_slots]
+            
+            if not participants:
+                continue
+            
+            # Initialize intersection with all 1s (available)
+            intersection = [AvailabilityConstants.AVAILABLE] * total_slots
+            
+            # AND operation: slot is 1 only if ALL participants have 1
+            for participant in participants:
+                participant_slots = agent_slots[participant]
+                for i in range(total_slots):
+                    if i < len(participant_slots):
+                        # If any participant is busy (0), intersection is busy (0)
+                        intersection[i] = intersection[i] & participant_slots[i]
+            
+            meeting_intersections[meeting.meeting_id] = intersection
+        
+        return meeting_intersections
+
     async def _async_log_availability_table(self) -> None:
         """
         Log agent availability table to all relevant blackboards during planning phase via MCP.
@@ -311,9 +351,23 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 logger.warning("No agent availability data to log")
                 return
             
+            # Generate meeting intersections
+            meeting_intersections = self._generate_meeting_intersections(agent_slots)
+            
+            # Prepare meeting info for formatting
+            meeting_info = {}
+            for meeting in self.instance.meetings:
+                meeting_info[meeting.meeting_id] = {
+                    'title': meeting.title,
+                    'participants': list(meeting.participants)
+                }
+            
             # Get all blackboards via MCP
             async with self.communication_protocol.mcp_client as client:
-                blackboards = (await client.call_tool("return_blackboards", {})).data
+                blackboards_result = await client.call_tool("return_blackboards", {})
+                logger.debug("Blackboards result type: %s", type(blackboards_result))
+                blackboards = blackboards_result.data if hasattr(blackboards_result, 'data') else blackboards_result
+                logger.debug("Blackboards data: %s", blackboards)
             
             if not blackboards:
                 logger.warning("No blackboards available for logging availability table")
@@ -334,17 +388,30 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 # Create filtered agent slots for this blackboard
                 filtered_slots = {agent: agent_slots[agent] for agent in relevant_agents}
                 
+                # Filter meetings relevant to this blackboard (meetings with at least one blackboard agent)
+                relevant_meetings = {}
+                for meeting_id, intersection in meeting_intersections.items():
+                    meeting = next((m for m in self.instance.meetings if m.meeting_id == meeting_id), None)
+                    if meeting and any(p in blackboard['agents'] for p in meeting.participants):
+                        relevant_meetings[meeting_id] = intersection
+                
                 # Log to blackboard via MCP
                 async with self.communication_protocol.mcp_client as client:
-                    result = (await client.call_tool("log_availability_table", {
+                    logger.debug("Calling log_availability_table for blackboard %d", blackboard_id)
+                    tool_result = await client.call_tool("log_availability_table", {
                         "blackboard_id": blackboard_id,
                         "agent_slots": filtered_slots,
                         "num_days": self.num_days,
                         "num_slots_per_day": self.slots_per_day,
-                        "phase": AvailabilityConstants.PHASE_PLANNING
-                    })).data
+                        "phase": AvailabilityConstants.PHASE_PLANNING,
+                        "meeting_intersections": relevant_meetings,
+                        "meeting_info": meeting_info
+                    })
+                    logger.debug("Tool result type: %s, content: %s", type(tool_result), tool_result)
+                    result = tool_result.data if hasattr(tool_result, 'data') else tool_result
+                    logger.debug("Result after extraction: %s", result)
                     
-                    if result.get("status") == "success":
+                    if isinstance(result, dict) and result.get("status") == "success":
                         logged_count += 1
                         logger.info(
                             "✓ Logged availability table (%d days x %d slots) to blackboard %d for agents: %s",
@@ -353,7 +420,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                     else:
                         logger.warning(
                             "Failed to log to blackboard %d: %s", 
-                            blackboard_id, result.get("message", "Unknown error")
+                            blackboard_id, result.get("message", "Unknown error") if isinstance(result, dict) else str(result)
                         )
             
             if logged_count == 0:
@@ -363,7 +430,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             
         except Exception as e:
             logger.error("Failed to log availability table: %s", e, exc_info=True)
-            raise
+            # Don't raise - availability logging is optional, simulation should continue
+            logger.warning("Simulation will continue without availability table")
 
 
     def log_iteration(self, iteration: int) -> None:

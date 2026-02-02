@@ -56,11 +56,14 @@ def format_availability_table(
     agent_slots: Dict[str, List[int]],
     num_days: int = AvailabilityConstants.DEFAULT_NUM_DAYS,
     num_slots_per_day: int = AvailabilityConstants.DEFAULT_SLOTS_PER_DAY,
-    phase: str = AvailabilityConstants.PHASE_PLANNING
+    phase: str = AvailabilityConstants.PHASE_PLANNING,
+    meeting_intersections: Dict[str, List[int]] = None,
+    meeting_info: Dict[str, Dict[str, any]] = None
 ) -> str:
     """
     Format agent availability as a human-readable table for the blackboard.
     Creates a separate table for each agent in paper format (Day × Slot).
+    Optionally includes meeting-specific intersection tables.
     
     Args:
         agent_slots: Dictionary mapping agent names to their binary availability lists
@@ -68,6 +71,8 @@ def format_availability_table(
         num_days: Number of days to display (default: 1)
         num_slots_per_day: Number of time slots per day (default: 12)
         phase: Current simulation phase (for header)
+        meeting_intersections: Optional dict mapping meeting IDs to intersection availability
+        meeting_info: Optional dict with meeting details (title, participants)
         
     Returns:
         Formatted string table with separate table per agent
@@ -118,6 +123,46 @@ def format_availability_table(
                 val = slots[t] if t < len(slots) else AvailabilityConstants.AVAILABLE
                 row_values.append(f"{val:^6}")
             
+            row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
+            table_lines.append(row)
+    
+    # Add meeting intersection tables if provided
+    if meeting_intersections and meeting_info:
+        table_lines.append("")
+        table_lines.append("=" * 70)
+        table_lines.append("MEETING-SPECIFIC COMMON AVAILABILITY")
+        table_lines.append("(Slots where ALL participants are available)")
+        table_lines.append("=" * 70)
+        
+        for meeting_id, intersection_slots in meeting_intersections.items():
+            info = meeting_info.get(meeting_id, {})
+            title = info.get('title', meeting_id)
+            participants = info.get('participants', [])
+            
+            table_lines.append("")
+            table_lines.append(f"Meeting: {title}")
+            table_lines.append(f"Participants: {', '.join(participants)}")
+            
+            # Create header row
+            slot_headers = [f"Slot {i+1}" for i in range(num_slots_per_day)]
+            header = "        | " + " | ".join(f"{s:^6}" for s in slot_headers) + " |"
+            separator = "-" * len(header)
+            
+            table_lines.append(header)
+            table_lines.append(separator)
+            
+            # Create row for each day
+            for day in range(num_days):
+                day_label = f"Day {day + 1}"
+                row_values = []
+                
+                for slot in range(num_slots_per_day):
+                    t = day * num_slots_per_day + slot
+                    val = intersection_slots[t] if t < len(intersection_slots) else AvailabilityConstants.AVAILABLE
+                    row_values.append(f"{val:^6}")
+                
+                row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
+                table_lines.append(row)
             row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
             table_lines.append(row)
         

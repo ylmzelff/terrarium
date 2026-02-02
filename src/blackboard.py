@@ -195,9 +195,12 @@ class Megaboard:
 
     def log_availability_table(self, blackboard_id: int, agent_slots: Dict[str, List[int]], 
                               num_days: int = 1, num_slots_per_day: int = 12,
-                              phase: str = "planning") -> None:
+                              phase: str = "planning",
+                              meeting_intersections: Dict[str, List[int]] = None,
+                              meeting_info: Dict[str, Dict[str, any]] = None) -> None:
         """
         Format and log the availability table to the specified blackboard.
+        Includes meeting-specific intersection tables if provided.
         
         Args:
             blackboard_id: ID of the blackboard to log to
@@ -205,6 +208,8 @@ class Megaboard:
             num_days: Number of days in the table
             num_slots_per_day: Number of time slots per day
             phase: Current phase (planning or execution)
+            meeting_intersections: Optional dict of meeting ID to intersection availability
+            meeting_info: Optional dict of meeting details (title, participants)
             
         Raises:
             Exception: Re-raises any exception after logging
@@ -215,7 +220,10 @@ class Megaboard:
         logger = logging.getLogger(__name__)
         
         try:
-            formatted_table = format_availability_table(agent_slots, num_days, num_slots_per_day, phase)
+            formatted_table = format_availability_table(
+                agent_slots, num_days, num_slots_per_day, phase,
+                meeting_intersections, meeting_info
+            )
             
             payload = {
                 "message": formatted_table,

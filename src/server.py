@@ -131,13 +131,18 @@ def log_action_to_blackboards(agent_name: str, action: Dict[str, Any], result: D
 @mcp.tool()
 def log_availability_table(blackboard_id: int, agent_slots: Dict[str, List[int]], 
                           num_days: int = 1, num_slots_per_day: int = 12,
-                          phase: str = "planning") -> Dict[str, str]:
-    """Log an availability table to the specified blackboard."""
+                          phase: str = "planning",
+                          meeting_intersections: Optional[Dict[str, List[int]]] = None,
+                          meeting_info: Optional[Dict[str, Dict[str, any]]] = None) -> Dict[str, str]:
+    """Log an availability table to the specified blackboard with optional meeting intersections."""
     import logging
     logger = logging.getLogger(__name__)
     
     try:
-        megaboard.log_availability_table(blackboard_id, agent_slots, num_days, num_slots_per_day, phase)
+        megaboard.log_availability_table(
+            blackboard_id, agent_slots, num_days, num_slots_per_day, phase,
+            meeting_intersections, meeting_info
+        )
         logger.info("MCP tool: Successfully logged availability table to blackboard %d", blackboard_id)
         return {"status": "success", "message": f"Availability table logged to blackboard {blackboard_id}"}
     except Exception as e:
