@@ -60,6 +60,7 @@ def format_availability_table(
 ) -> str:
     """
     Format agent availability as a human-readable table for the blackboard.
+    Creates a separate table for each agent in paper format (Day × Slot).
     
     Args:
         agent_slots: Dictionary mapping agent names to their binary availability lists
@@ -69,7 +70,7 @@ def format_availability_table(
         phase: Current simulation phase (for header)
         
     Returns:
-        Formatted string table
+        Formatted string table with separate table per agent
         
     Raises:
         ValueError: If validation fails
@@ -85,38 +86,39 @@ def format_availability_table(
         logger.error("Availability data validation failed: %s", e)
         raise
 
-    agents = list(agent_slots.keys())
-    
-    # Create header row with time slots
-    header = "Time Slot | " + " | ".join(f"{agent:^10}" for agent in agents)
-    separator = "-" * len(header)
-    
     table_lines = [
         f"\n=== AVAILABILITY TABLE ({phase} Phase) ===",
         "Legend: 1 = Available/Free (No Meetings), 0 = Busy (Has Meetings)",
-        "",
-        header,
-        separator
+        ""
     ]
     
-    # Iterate through all time slots
-    total_slots = num_days * num_slots_per_day
-    
-    for t in range(total_slots):
-        day = t // num_slots_per_day + 1
-        slot = t % num_slots_per_day
+    # Create separate table for each agent
+    for agent_idx, (agent, slots) in enumerate(agent_slots.items()):
+        if agent_idx > 0:
+            table_lines.append("")  # Blank line between agent tables
         
-        # Format row: Time | Agent1 | Agent2 ...
-        row_prefix = f"Day {day} S{slot:<2} | "
+        table_lines.append(f"Agent: {agent}")
         
-        agent_values = []
-        for agent in agents:
-            # Get availability (default to 1 [available] if index out of bounds)
-            slots = agent_slots.get(agent, [])
-            val = slots[t] if t < len(slots) else AvailabilityConstants.AVAILABLE
-            agent_values.append(f"{val:^10}")
+        # Create header row with slot numbers
+        slot_headers = [f"Slot {i+1}" for i in range(num_slots_per_day)]
+        header = "        | " + " | ".join(f"{s:^6}" for s in slot_headers) + " |"
+        separator = "-" * len(header)
+        
+        table_lines.append(header)
+        table_lines.append(separator)
+        
+        # Create row for each day
+        for day in range(num_days):
+            day_label = f"Day {day + 1}"
+            row_values = []
             
-        row = row_prefix + " | ".join(agent_values)
-        table_lines.append(row)
+            for slot in range(num_slots_per_day):
+                t = day * num_slots_per_day + slot
+                # Get availability (default to 1 [available] if index out of bounds)
+                val = slots[t] if t < len(slots) else AvailabilityConstants.AVAILABLE
+                row_values.append(f"{val:^6}")
+            
+            row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
+            table_lines.append(row)
         
     return "\n".join(table_lines)

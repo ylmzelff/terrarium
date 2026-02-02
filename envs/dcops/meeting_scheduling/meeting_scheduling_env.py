@@ -311,8 +311,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 logger.warning("No agent availability data to log")
                 return
             
-            # Get all blackboards
-            blackboards = self.communication_protocol.megaboard.blackboards
+            # Get all blackboards via MCP
+            async with self.communication_protocol.mcp_client as client:
+                blackboards = (await client.call_tool("return_blackboards", {})).data
             
             if not blackboards:
                 logger.warning("No blackboards available for logging availability table")
@@ -322,10 +323,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             
             # Log to each blackboard with relevant agents
             for blackboard in blackboards:
-                blackboard_id = int(blackboard.blackboard_id)
+                blackboard_id = int(blackboard['blackboard_id'])
                 
                 # Filter agents that are participants in this blackboard
-                relevant_agents = [a for a in agent_slots.keys() if a in blackboard.agents]
+                relevant_agents = [a for a in agent_slots.keys() if a in blackboard['agents']]
                 
                 if not relevant_agents:
                     continue
@@ -335,13 +336,13 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 
                 # Log to blackboard via MCP
                 async with self.communication_protocol.mcp_client as client:
-                    result = await client.call_tool("log_availability_table", {
+                    result = (await client.call_tool("log_availability_table", {
                         "blackboard_id": blackboard_id,
                         "agent_slots": filtered_slots,
                         "num_days": self.num_days,
                         "num_slots_per_day": self.slots_per_day,
                         "phase": AvailabilityConstants.PHASE_PLANNING
-                    })
+                    })).data
                     
                     if result.get("status") == "success":
                         logged_count += 1
