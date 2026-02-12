@@ -15,8 +15,8 @@ environment:
   max_participants: 4
   soft_meeting_ratio: 0.6
   # Availability table configuration
-  num_days: 1              # Number of days to show in availability table
-  slots_per_day: 12        # Number of time slots per day
+  num_days: 1 # Number of days to show in availability table
+  slots_per_day: 12 # Number of time slots per day
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random
@@ -56,7 +56,7 @@ llm:
       temperature: 0.7
   vllm:
     auto_start_server: true
-    persistent_server: false  # Keep the vLLM server alive between runs to avoid cold starts
+    persistent_server: false # Keep the vLLM server alive between runs to avoid cold starts
     health_check_path: "/models"
     startup_timeout: 600 # Increased for Colab (was 420)
     params:
@@ -73,12 +73,12 @@ llm:
         tool_call_parser: "mistral"
         additional_args: []
 notes:
-- MeetingScheduling baseline configuration (no attacks)
-- MeetingScheduling always logs scores for each iteration
-- MeetingScheduling environment coordinates attendance intervals across agents
-- Agents coordinate via blackboards during planning phase
-- Final attendance decisions happen during execution using attend_meeting action
-- Meetings have fixed windows on a shared timeline; soft meetings reward overlap
-- Strict meetings reward full‑window attendance; overlaps across two meetings are penalized
-- Objective: Maximize global reward ratio from CoLLAB v2 scoring
-- Simulation stops when all attendance variables are assigned or max iterations reached
+  - MeetingScheduling baseline configuration (no attacks)
+  - MeetingScheduling always logs scores for each iteration
+  - MeetingScheduling environment coordinates attendance intervals across agents
+  - Agents coordinate via blackboards during planning phase
+  - Final attendance decisions happen during execution using attend_meeting action
+  - Meetings have fixed windows on a shared timeline; soft meetings reward overlap
+  - Strict meetings reward full‑window attendance; overlaps across two meetings are penalized
+  - Objective: Maximize global reward ratio from CoLLAB v2 scoring
+  - Simulation stops when all attendance variables are assigned or max iterations reached

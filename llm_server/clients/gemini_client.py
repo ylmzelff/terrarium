@@ -23,18 +23,23 @@ class GeminiClient(AbstractClient):
         """Initialize the Gemini client."""
         try:
             import google.generativeai as genai
-            from dotenv import load_dotenv
         except ImportError as e:
             raise ImportError(
                 "Gemini client requires 'google-generativeai' package. "
                 "Install with: pip install google-generativeai"
             ) from e
 
-        load_dotenv(override=True)
+        # Try to load from .env file if available (optional)
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(override=False)  # Don't override existing env vars
+        except (ImportError, Exception):
+            pass  # dotenv not available or no .env file, use environment variables
+        
         self.api_key = os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "Google API key not found. Set GOOGLE_API_KEY in .env file"
+                "Google API key not found. Set GOOGLE_API_KEY environment variable or in .env file"
             )
 
         genai.configure(api_key=self.api_key)
