@@ -127,7 +127,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
         # Score tracking (simplified - no CoLLAB rewards)
         self.joint_reward_history: List[float] = []
-        self.max_joint_reward = 0.0
+        self.max_joint_reward = float(num_meetings)  # 1.0 point per meeting scheduled
         self.agents: List["BaseAgent"] = []
 
         # Initialize prompts (Put this after all other instance variables)
