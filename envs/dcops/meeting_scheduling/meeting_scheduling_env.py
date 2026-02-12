@@ -581,9 +581,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         for meeting in self.instance.meetings:
             meetings[meeting.meeting_id] = {
                 "title": meeting.title,
-                "meeting_type": meeting.meeting_type,
-                "start": meeting.start,
-                "end": meeting.end,
                 "participants": list(meeting.participants),
             }
 
