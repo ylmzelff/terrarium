@@ -36,6 +36,42 @@ from src.utils import (
 )
 from .meeting_scheduling_prompts import MeetingSchedulingPrompts
 
+class SimpleMeeting:
+    """Simple meeting object without CoLLAB dependency."""
+    def __init__(self, meeting_id: str, title: str, participants: List[str]):
+        self.meeting_id = meeting_id
+        self.title = title
+        self.participants = participants
+
+
+class SimpleProblemDefinition:
+    """Minimal problem definition for meeting scheduling."""
+    def __init__(self, agents: List[str], meetings: List[SimpleMeeting]):
+        self.agents = {name: name for name in agents}
+        self.variables = []
+        self._agent_vars = {agent: [] for agent in agents}
+        self.factors = []  # No factors in simplified version
+        
+        # Create variables (one per agent per meeting they participate in)
+        for meeting in meetings:
+            for agent in meeting.participants:
+                var_name = f"{agent}__{meeting.meeting_id}"
+                self.variables.append(var_name)
+                self._agent_vars[agent].append(var_name)
+    
+    def agent_variables(self, agent_name: str):
+        """Return variables (meeting assignments) for an agent."""
+        class Variable:
+            def __init__(self, name):
+                self.name = name
+        return [Variable(v) for v in self._agent_vars.get(agent_name, [])]
+    
+    def agent_instruction(self, agent_name: str) -> str:
+        """Return instruction for agent (simplified)."""
+        num_meetings = len(self._agent_vars.get(agent_name, []))
+        return f"You participate in {num_meetings} meeting(s). Select the earliest available slot from the intersection for each meeting."
+
+
 class MeetingSchedulingEnvironment(AbstractEnvironment):
     """
     MeetingScheduling environment adaptor for attendance‑interval coordination tasks.
@@ -66,45 +102,40 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Clear seed directories FIRST to ensure clean state for this run
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
-        # ---- Build CoLLAB v2 instance -------------------------------------------------
+        # ---- Simple meeting generation (no CoLLAB dependency) -------------------------
         network_cfg = config.get("communication_network") or {}
         assert network_cfg is not None and network_cfg != {}, "communication_network config must be specified"
         num_agents = network_cfg.get("num_agents")
-        assert num_agents is not None and type(num_agents) == int, "communication_network.num_agents in config must be specified as an integer"
+        assert num_agents is not None and type(num_agents) == int, "communication_network.num_agents must be an integer"
 
-        num_meetings = self.env_config.get("num_meetings", self.env_config.get("n_meetings", 6))
-        timeline_length = self.env_config.get("timeline_length", 12)
-        min_participants = self.env_config.get("min_participants", 2)
-        max_participants = self.env_config.get(
-            "max_participants", self.env_config.get("max_attendees_per_meeting", 4)
-        )
-        soft_ratio = self.env_config.get("soft_meeting_ratio", 0.6)
+        num_meetings = self.env_config.get("num_meetings", 1)
+        
+        # Generate agent names
+        agent_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+        self.agent_names = [f"Agent{agent_letters[i]}" for i in range(num_agents)]
+        
+        # Generate simple meetings
+        self.meetings = []
+        for i in range(num_meetings):
+            meeting_id = f"m{i+1:03d}"
+            title = f"Meeting {i+1}"
+            # All agents participate in all meetings for simplicity
+            participants = self.agent_names.copy()
+            self.meetings.append(SimpleMeeting(meeting_id, title, participants))
+        
+        # Create simple problem definition
+        class SimpleInstance:
+            def __init__(self, meetings, timeline_length):
+                self.meetings = meetings
+                self.timeline_length = timeline_length
+                self.explanations = {}  # No agent-specific explanations
+        
+        self.instance = SimpleInstance(self.meetings, self.env_config.get("timeline_length", 12))
+        self.problem = SimpleProblemDefinition(self.agent_names, self.meetings)
 
-        collab_cfg = MeetingSchedulingConfig(
-            num_agents=int(num_agents),
-            num_meetings=int(num_meetings),
-            timeline_length=int(timeline_length),
-            min_participants=int(min_participants),
-            max_participants=int(max_participants),
-            soft_meeting_ratio=float(soft_ratio),
-            rng_seed=int(self.current_seed),
-        )
-
-        dcops_root = Path(__file__).resolve().parents[1]
-        instance_dir = (
-            dcops_root
-            / "outputs"
-            / "collab_instances"
-            / "meeting_scheduling"
-            / f"seed_{self.current_seed}"
-        )
-        self.instance = generate_instance(collab_cfg, instance_dir)
-        self.problem: ProblemDefinition = self.instance.problem
-
-        # Score tracking
+        # Score tracking (simplified - no CoLLAB rewards)
         self.joint_reward_history: List[float] = []
-        self.agent_names = list(self.problem.agents.keys())
-        self.max_joint_reward = self.compute_max_joint_reward()
+        self.max_joint_reward = 0.0
         self.agents: List["BaseAgent"] = []
 
         # Initialize prompts (Put this after all other instance variables)
@@ -115,11 +146,18 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
         # Availability table configuration (from config or defaults)
         self.num_days = self.env_config.get("num_days", 1)
-        self.slots_per_day = self.env_config.get("slots_per_day", self.instance.timeline_length)
+        self.slots_per_day = self.env_config.get("slots_per_day", 12)
+        
+        # Generate availability for each meeting
+        self.meeting_availabilities = {}  # meeting_id -> {agent_name -> [0,1,0,...]}
+        for meeting in self.meetings:
+            self.meeting_availabilities[meeting.meeting_id] = self._generate_availability_for_meeting(
+                meeting.participants
+            )
 
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
-        logger.info("Total meetings to schedule: %s", len(self.instance.meetings))
+        logger.info("Total meetings to schedule: %s", len(self.meetings))
         logger.info("Availability table: %d days x %d slots/day", self.num_days, self.slots_per_day)
 
     async def async_init(self):
@@ -188,8 +226,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return False
     
     def compute_max_joint_reward(self) -> float:
-        """Return the optimal joint reward for the environment."""
-        return float(getattr(self.instance, "max_utility", 0.0))
+        """Return the optimal joint reward (simplified - no CoLLAB scoring)."""
+        # Maximum reward = all agents successfully scheduled all meetings at earliest common slot
+        return float(len(self.agent_names) * len(self.meetings))
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
         """Return the joint reward for a joint assignment."""
@@ -199,119 +238,149 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
     def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
         """Return the reward attributed to a single agent."""
         _, local_rewards = self._rewards(actions)
-        assert agent in local_rewards, f"Agent {agent} not found in local rewards"
-        local_reward = local_rewards.get(agent)
-        assert local_reward is not None, f"Local reward for agent {agent} is None"
-        return local_reward
+        return local_rewards.get(agent, 0.0)
 
     def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
         """
-        Compute joint reward and per-agent rewards for a given joint assignment.
-
-        We sum factor rewards whose full scope has been assigned.
-        Per-agent rewards are attributed evenly to owners of variables in a factor's scope.
+        Compute simplified rewards based on successful slot selections.
+        
+        Reward = 1.0 for each agent that selected a valid slot from the intersection.
+        This replaces the complex CoLLAB scoring system.
         """
         total_reward = 0.0
         local_rewards: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
-
-        for factor in self.problem.factors:
-            if not all(var in actions for var in factor.scope):
+        
+        # For each meeting, check if agents selected slots from the intersection
+        meeting_intersections = self._generate_meeting_intersections()
+        
+        for meeting_id, intersection in meeting_intersections.items():
+            # Find intersection slots (where value = 1)
+            valid_slots = [i for i, val in enumerate(intersection) if val == 1]
+            
+            if not valid_slots:
                 continue
-            try:
-                reward = factor.evaluate(actions)
-            except Exception:
-                continue
-            total_reward += reward
-
-            owners = {self.problem.variables[v].owner for v in factor.scope if v in self.problem.variables}
-            if owners:
-                share = reward / len(owners)
-                for owner in owners:
-                    local_rewards[owner] += share
-
+            
+            # Check each agent's choice for this meeting
+            for agent in self.agent_names:
+                var_name = f"{agent}__{meeting_id}"
+                if var_name in actions:
+                    chosen_interval = actions[var_name]
+                    
+                    # Parse interval (e.g., "3" or "3-4")
+                    try:
+                        if '-' in str(chosen_interval):
+                            start = int(chosen_interval.split('-')[0])
+                        else:
+                            start = int(chosen_interval)
+                        
+                        # Reward if chosen slot is in valid intersection slots
+                        if start in valid_slots:
+                            total_reward += 1.0
+                            local_rewards[agent] += 1.0
+                    except (ValueError, AttributeError):
+                        pass  # Invalid format, no reward
+        
         return total_reward, local_rewards
+
+
+    def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
+        """
+        Generate availability arrays for a specific meeting.
+        
+        Each meeting gets its own random intersection indices, ensuring agents
+        have different availability patterns across different meetings.
+        
+        Args:
+            participants: List of agent names participating in this meeting
+            
+        Returns:
+            Dictionary mapping agent names to their availability lists for this meeting
+        """
+        import random
+        from src.availability import AvailabilityConstants
+        
+        # Get configuration parameters
+        total_slots = self.num_days * self.slots_per_day
+        intersection_count = self.env_config.get('intersection', total_slots // 2)
+        
+        # Validate intersection parameter
+        if intersection_count > total_slots:
+            logger.warning(
+                f"Intersection count {intersection_count} exceeds total slots {total_slots}. "
+                f"Setting intersection to {total_slots}"
+            )
+            intersection_count = total_slots
+        
+        # Randomly select intersection indices for THIS meeting
+        # Different meetings will have different intersection indices
+        intersection_indices = sorted(random.sample(range(total_slots), intersection_count))
+        
+        logger.info(
+            f"Meeting availability: {total_slots} total slots, "
+            f"{intersection_count} common slots at indices: {intersection_indices}"
+        )
+        
+        availability = {}
+        
+        # Generate availability for each participant in this meeting
+        for agent_name in participants:
+            # Initialize all slots randomly (each agent gets unique pattern)
+            slots = []
+            
+            for idx in range(total_slots):
+                if idx in intersection_indices:
+                    # Guaranteed common slot - must be available (1) for all participants
+                    slots.append(AvailabilityConstants.AVAILABLE)
+                else:
+                    # Non-intersection slot - randomly 0 or 1 (different for each agent)
+                    # 30% chance of being available (creates realistic sparse schedules)
+                    is_available = random.random() < 0.3
+                    slots.append(
+                        AvailabilityConstants.AVAILABLE if is_available 
+                        else AvailabilityConstants.BUSY
+                    )
+            
+            availability[agent_name] = slots
+            
+            # Log agent availability summary
+            available_count = sum(slots)
+            unique_available = available_count - intersection_count
+            logger.info(
+                f"  {agent_name}: {available_count}/{total_slots} available "
+                f"({intersection_count} common, {unique_available} unique)"
+            )
+        
+        return availability
 
 
     def _generate_availability_slots(self) -> Dict[str, List[int]]:
         """
-        Generate agent availability slots based on meeting assignments.
-        
-        Creates a 1D binary array for each agent where:
-        - 1 = Available/Free (agent has NO meetings in this time slot)
-        - 0 = Busy/In Meeting (agent has meetings in this time slot)
-        
-        The total slots = num_days * slots_per_day (from config)
-        
-        Returns:
-            Dictionary mapping agent names to their availability lists
+        DEPRECATED: Use meeting_availabilities instead.
+        This method aggregates availability across all meetings for backward compatibility.
         """
-        from src.availability import AvailabilityConstants
-        
-        # Use configured values for table dimensions
-        total_slots = self.num_days * self.slots_per_day
-        agent_slots = {}
-        
-        # Process all agents
-        for agent_name in self.agent_names:
-            # Initialize all slots as available (1) - agent is free by default
-            slots = [AvailabilityConstants.AVAILABLE] * total_slots
-            
-            # Mark slots as busy (0) if agent has meetings in those time slots
-            for meeting in self.instance.meetings:
-                if agent_name in meeting.participants:
-                    # Validate meeting boundaries
-                    if meeting.start < 0 or meeting.end < 0:
-                        logger.warning(
-                            "Meeting %s has negative time boundaries: [%d, %d)",
-                            getattr(meeting, 'meeting_id', 'unknown'),
-                            meeting.start, meeting.end
-                        )
-                        continue
-                    
-                    if meeting.start >= meeting.end:
-                        logger.warning(
-                            "Meeting %s has invalid time range: [%d, %d)",
-                            getattr(meeting, 'meeting_id', 'unknown'),
-                            meeting.start, meeting.end
-                        )
-                        continue
-                    
-                    # Mark the meeting window as busy (0)
-                    for t in range(meeting.start, meeting.end):
-                        if 0 <= t < total_slots:
-                            slots[t] = AvailabilityConstants.BUSY
-                        elif t >= total_slots:
-                            logger.warning(
-                                "Meeting %s extends beyond timeline: slot %d >= %d",
-                                getattr(meeting, 'meeting_id', 'unknown'),
-                                t, total_slots
-                            )
-            
-            agent_slots[agent_name] = slots
-        
-        return agent_slots
+        # Return first meeting's availability if exists, otherwise empty
+        if self.meeting_availabilities:
+            first_meeting_id = list(self.meeting_availabilities.keys())[0]
+            return self.meeting_availabilities[first_meeting_id]
+        return {}
 
-    def _generate_meeting_intersections(self, agent_slots: Dict[str, List[int]]) -> Dict[str, List[int]]:
+    def _generate_meeting_intersections(self) -> Dict[str, Dict[str, List[int]]]:
         """
-        Generate intersection (common availability) for each meeting's participants.
+        Generate intersection (common availability) for each meeting.
         
         For each meeting, computes slots where ALL participants are available (1).
         Uses AND operation: slot is 1 only if all participants have 1 in that slot.
         
-        Args:
-            agent_slots: Dictionary mapping agent names to their availability lists
-            
         Returns:
-            Dictionary mapping meeting IDs to intersection availability lists
+            Dictionary mapping meeting IDs to intersection availability
         """
         from src.availability import AvailabilityConstants
         
         meeting_intersections = {}
         total_slots = self.num_days * self.slots_per_day
         
-        for meeting in self.instance.meetings:
-            # Get participants for this meeting who are in agent_slots
-            participants = [p for p in meeting.participants if p in agent_slots]
+        for meeting_id, agent_slots in self.meeting_availabilities.items():
+            participants = list(agent_slots.keys())
             
             if not participants:
                 continue
@@ -327,7 +396,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                         # If any participant is busy (0), intersection is busy (0)
                         intersection[i] = intersection[i] & participant_slots[i]
             
-            meeting_intersections[meeting.meeting_id] = intersection
+            meeting_intersections[meeting_id] = intersection
         
         return meeting_intersections
 
@@ -335,98 +404,81 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         """
         Log agent availability table to all relevant blackboards during planning phase via MCP.
         
-        This method extracts availability data from meeting assignments and
-        formats it as a table for visualization in the blackboard logs.
-        Uses num_days and slots_per_day from config.
-        
-        Logs to all blackboards where at least one agent is a participant.
+        Shows availability for each meeting separately since each meeting has
+        different availability patterns and intersection indices.
         """
         from src.availability import AvailabilityConstants
         
         try:
-            # Get availability data from meeting windows
-            agent_slots = self._generate_availability_slots()
-            
-            if not agent_slots:
-                logger.warning("No agent availability data to log")
-                return
-            
             # Generate meeting intersections
-            meeting_intersections = self._generate_meeting_intersections(agent_slots)
+            meeting_intersections = self._generate_meeting_intersections()
             
             # Prepare meeting info for formatting
             meeting_info = {}
-            for meeting in self.instance.meetings:
+            for meeting in self.meetings:
                 meeting_info[meeting.meeting_id] = {
-                    'title': meeting.title,
-                    'participants': list(meeting.participants)
+                    "title": meeting.title,
+                    "participants": meeting.participants
                 }
             
-            # Get all blackboards via MCP
-            async with self.communication_protocol.mcp_client as client:
-                blackboards_result = await client.call_tool("return_blackboards", {})
-                logger.debug("Blackboards result type: %s", type(blackboards_result))
-                blackboards = blackboards_result.data if hasattr(blackboards_result, 'data') else blackboards_result
-                logger.debug("Blackboards data: %s", blackboards)
-            
-            if not blackboards:
-                logger.warning("No blackboards available for logging availability table")
-                return
-            
-            logged_count = 0
-            
-            # Log to each blackboard with relevant agents
-            for blackboard in blackboards:
-                blackboard_id = int(blackboard['blackboard_id'])
+            # For each meeting, log its availability table
+            for meeting_id, agent_slots in self.meeting_availabilities.items():
+                meeting_data = meeting_info.get(meeting_id, {})
+                meeting_title = meeting_data.get("title", meeting_id)
+                participants = meeting_data.get("participants", [])
                 
-                # Filter agents that are participants in this blackboard
-                relevant_agents = [a for a in agent_slots.keys() if a in blackboard['agents']]
+                # Get intersection for this meeting
+                intersection = meeting_intersections.get(meeting_id, [])
                 
-                if not relevant_agents:
+                logger.info(f"=== Availability for {meeting_title} (Meeting {meeting_id}) ===")
+                
+                # Get all blackboards via MCP
+                async with self.communication_protocol.mcp_client as client:
+                    blackboards_result = await client.call_tool("return_blackboards", {})
+                    blackboards = blackboards_result.data if hasattr(blackboards_result, 'data') else blackboards_result
+                
+                if not blackboards:
+                    logger.warning(f"No blackboards available for logging {meeting_title}")
                     continue
                 
-                # Create filtered agent slots for this blackboard
-                filtered_slots = {agent: agent_slots[agent] for agent in relevant_agents}
-                
-                # Filter meetings relevant to this blackboard (meetings with at least one blackboard agent)
-                relevant_meetings = {}
-                for meeting_id, intersection in meeting_intersections.items():
-                    meeting = next((m for m in self.instance.meetings if m.meeting_id == meeting_id), None)
-                    if meeting and any(p in blackboard['agents'] for p in meeting.participants):
-                        relevant_meetings[meeting_id] = intersection
-                
-                # Log to blackboard via MCP
-                async with self.communication_protocol.mcp_client as client:
-                    logger.debug("Calling log_availability_table for blackboard %d", blackboard_id)
-                    tool_result = await client.call_tool("log_availability_table", {
-                        "blackboard_id": blackboard_id,
-                        "agent_slots": filtered_slots,
-                        "num_days": self.num_days,
-                        "num_slots_per_day": self.slots_per_day,
-                        "phase": AvailabilityConstants.PHASE_PLANNING,
-                        "meeting_intersections": relevant_meetings,
-                        "meeting_info": meeting_info
-                    })
-                    logger.debug("Tool result type: %s, content: %s", type(tool_result), tool_result)
-                    result = tool_result.data if hasattr(tool_result, 'data') else tool_result
-                    logger.debug("Result after extraction: %s", result)
+                # Log to each blackboard with relevant agents
+                for blackboard in blackboards:
+                    blackboard_id = int(blackboard['blackboard_id'])
                     
-                    if isinstance(result, dict) and result.get("status") == "success":
-                        logged_count += 1
-                        logger.info(
-                            "✓ Logged availability table (%d days x %d slots) to blackboard %d for agents: %s",
-                            self.num_days, self.slots_per_day, blackboard_id, ", ".join(relevant_agents)
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to log to blackboard %d: %s", 
-                            blackboard_id, result.get("message", "Unknown error") if isinstance(result, dict) else str(result)
-                        )
-            
-            if logged_count == 0:
-                logger.warning("Availability table was not logged to any blackboard")
-            else:
-                logger.info("Successfully logged availability table to %d blackboard(s)", logged_count)
+                    # Filter agents that are participants in THIS meeting AND this blackboard
+                    relevant_agents = [a for a in participants if a in blackboard['agents']]
+                    
+                    if not relevant_agents:
+                        continue
+                    
+                    # Create filtered agent slots for this blackboard (only this meeting's participants)
+                    filtered_slots = {agent: agent_slots[agent] for agent in relevant_agents}
+                    
+                    # Prepare meeting-specific intersection
+                    meeting_intersections_for_bb = {meeting_id: intersection}
+                    meeting_info_for_bb = {meeting_id: meeting_data}
+                    
+                    # Log to blackboard via MCP
+                    async with self.communication_protocol.mcp_client as client:
+                        tool_result = await client.call_tool("log_availability_table", {
+                            "blackboard_id": blackboard_id,
+                            "agent_slots": filtered_slots,
+                            "num_days": self.num_days,
+                            "num_slots_per_day": self.slots_per_day,
+                            "phase": AvailabilityConstants.PHASE_PLANNING,
+                            "meeting_intersections": meeting_intersections_for_bb,
+                            "meeting_info": meeting_info_for_bb
+                        })
+                        result = tool_result.data if hasattr(tool_result, 'data') else tool_result
+                        
+                        if isinstance(result, dict) and result.get("status") == "success":
+                            logger.info(
+                                f"✓ Logged {meeting_title} availability to blackboard {blackboard_id} for agents: {', '.join(relevant_agents)}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to log {meeting_title} to blackboard {blackboard_id}: {result}"
+                            )
             
         except Exception as e:
             logger.error("Failed to log availability table: %s", e, exc_info=True)

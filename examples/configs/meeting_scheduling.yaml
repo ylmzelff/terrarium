@@ -8,15 +8,16 @@ simulation:
   note: "im a note"
 environment:
   name: MeetingSchedulingEnvironment
-  # CoLLAB v2 MeetingScheduling (attendance intervals)
-  num_meetings: 3
-  timeline_length: 12
-  min_participants: 2
-  max_participants: 4
-  soft_meeting_ratio: 0.6
+  # Simple meeting scheduling (no CoLLAB dependency)
+  num_meetings: 1 # Number of meetings to schedule
+  timeline_length: 12 # Not used anymore (kept for compatibility)
+  min_participants: 2 # Not used anymore
+  max_participants: 4 # Not used anymore
+  soft_meeting_ratio: 0.6 # Not used anymore
   # Availability table configuration
   num_days: 1 # Number of days to show in availability table
   slots_per_day: 12 # Number of time slots per day
+  intersection: 3 # Number of common available slots (where all agents have 1)
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random
@@ -28,8 +29,8 @@ communication_network:
   # consolidate_channels=true => one blackboard per clique (plus leftover edges)
   consolidate_channels: true
 llm:
-  # Provider: "openai", "anthropic", "gemini", "together", or "vllm"
-  provider: "vllm"
+  # Provider: "openai", "anthropic", "gemini", "together", "vllm", or "mock"
+  provider: "vllm" # Using Qwen2.5-3B-Instruct on Colab
   openai:
     model: "gpt-4.1-mini-2025-04-14"
     params:
@@ -63,14 +64,14 @@ llm:
       max_tokens: 1024
       temperature: 0.7
     models:
-      - checkpoint: "mistralai/Mistral-7B-Instruct-v0.3"
+      - checkpoint: "Qwen/Qwen2.5-3B-Instruct"
         host: "127.0.0.1"
         port: 8020
         tensor_parallel_size: 1
-        gpu_memory_utilization: 0.85
-        max_model_len: 8192
+        gpu_memory_utilization: 0.70
+        max_model_len: 4096
         trust_remote_code: true
-        tool_call_parser: "mistral"
+        tool_call_parser: "hermes"
         additional_args: []
 notes:
   - MeetingScheduling baseline configuration (no attacks)

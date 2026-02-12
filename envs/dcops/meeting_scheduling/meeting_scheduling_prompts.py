@@ -4,7 +4,7 @@ from envs.abstract_environment import AbstractEnvironment
 from src.logger import PromptLogger
 from src.tool_prompt_utils import build_vllm_tool_instructions, get_phase_tool_instructions
 
-
+# sana verilen 1 dimensional arraylardan ortak intersection bul(1 olan slotlar için) ve executiondan sonra karar verilen index i döndür.
 class MeetingSchedulingPrompts:
     """
     Prompt builder for the CoLLAB v2 MeetingScheduling environment.
@@ -20,33 +20,35 @@ class MeetingSchedulingPrompts:
             full_config,
             execution_tool_lines=[
                 "- attend_meeting(meeting_id: str, interval: str): "
-                "Choose your attendance interval for a meeting you participate in. "
-                "interval must be 'skip' or 'join-leave' (e.g., '3-5')."
+                "Schedule your attendance at a specific time slot. "
+                "interval should be the slot index from the intersection array (e.g., '1', '3', '4')."
             ],
             planning_header="Planning phase tools (blackboard coordination only):",
             execution_header="Execution phase tools (blackboard + attendance decisions):",
             system_note=(
                 "Planning: only blackboard tools are permitted.\n"
-                "Execution: attend_meeting becomes available in addition to blackboard tools."
+                "Execution: attend_meeting becomes available to commit to the earliest available slot."
             ),
         )
 
     def get_system_prompt(self) -> str:
-        base_prompt = """You are participating in a meeting attendance coordination task.
+        base_prompt = """You are participating in a meeting scheduling coordination task.
+
+TASK:
+- You have an availability array showing your free/busy time slots.
+- Other agents have their own availability arrays.
+- The system calculates the INTERSECTION (common available slots) between all participants.
+- Your goal: Schedule the meeting at the EARLIEST common available slot (smallest index where intersection = 1).
 
 PHASES:
-- Planning Phase: Use blackboards to discuss which meetings to attend and for how long.
-- Execution Phase: Commit your attendance intervals using the attend_meeting tool.
+- Planning Phase: Use blackboards to discuss and identify the earliest common available slot.
+- Execution Phase: Commit your attendance at the agreed slot using the attend_meeting tool.
 
 RULES:
-- You may only decide attendance for meetings you participate in.
-- Each meeting has a fixed window [start, end). Your interval must lie within that window.
-- Use 'skip' only if attending is impractical or low value.
-- For SOFT meetings, overlapping with others yields higher reward.
-- For STRICT meetings, attending the full window yields the best reward.
-- Avoid overlapping attendance across two meetings that conflict in time.
-
-Your goal is to maximise the overall reward by coordinating with other agents."""
+- You may only schedule meetings you participate in.
+- Check the availability table to find the intersection (slots where ALL participants are available).
+- Select the slot with the SMALLEST INDEX where intersection = 1.
+- Use that slot index to schedule the meeting."""
 
         system_text = (self.tool_instruction_data or {}).get("system")
         if system_text:
@@ -121,9 +123,8 @@ Your goal is to maximise the overall reward by coordinating with other agents.""
             status = f"CHOSEN: {current_choice}" if current_choice is not None else "PENDING"
             if meeting:
                 context_parts.append(
-                    f"- {meeting.meeting_id}: {meeting.title} ({meeting.meeting_type}) "
-                    f"window [{meeting.start}, {meeting.end}) participants "
-                    f"{', '.join(meeting.participants)} :: {status}"
+                    f"- {meeting.meeting_id}: {meeting.title} "
+                    f"participants: {', '.join(meeting.participants)} :: {status}"
                 )
             else:
                 context_parts.append(f"- {meeting_id} :: {status}")
@@ -147,7 +148,8 @@ Your goal is to maximise the overall reward by coordinating with other agents.""
             context_parts.extend(
                 [
                     "=== CURRENT PHASE: PLANNING ===",
-                    "Use blackboards to coordinate intervals with others before committing.",
+                    "Use blackboards to identify the earliest common available slot from the intersection array.",
+                    "Coordinate with other participants to agree on the smallest index where all are available.",
                     "",
                 ]
             )
@@ -155,8 +157,8 @@ Your goal is to maximise the overall reward by coordinating with other agents.""
             context_parts.extend(
                 [
                     "=== CURRENT PHASE: EXECUTION ===",
-                    "Commit your final attendance intervals using attend_meeting.",
-                    "Only call attend_meeting for meetings listed in YOUR MEETINGS above.",
+                    "Commit your attendance at the agreed slot using attend_meeting.",
+                    "Use the smallest index from the intersection where value = 1.",
                     "",
                 ]
             )
