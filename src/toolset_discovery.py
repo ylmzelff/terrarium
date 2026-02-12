@@ -1,19 +1,44 @@
 from typing import Any, Dict, List, Set
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Always import MeetingScheduling tools (simplified, no dependencies)
 from envs.dcops.meeting_scheduling.meeting_scheduling_tools import MeetingSchedulingTools
-from envs.dcops.personal_assistant.personal_assistant_tools import PersonalAssistantTools
-from envs.dcops.smart_grid.smartgrid_tools import SmartGridTools
+
+# Optional imports for other environments
+try:
+    from envs.dcops.personal_assistant.personal_assistant_tools import PersonalAssistantTools
+    _PERSONAL_ASSISTANT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"PersonalAssistant tools not available: {e}")
+    PersonalAssistantTools = None
+    _PERSONAL_ASSISTANT_AVAILABLE = False
+
+try:
+    from envs.dcops.smart_grid.smartgrid_tools import SmartGridTools
+    _SMARTGRID_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"SmartGrid tools not available: {e}")
+    SmartGridTools = None
+    _SMARTGRID_AVAILABLE = False
 
 class ToolsetDiscovery:
     def __init__(self):
         self.meeting_tools = MeetingSchedulingTools(blackboard_manager=None)
-        self.personal_assistant_tools = PersonalAssistantTools(blackboard_manager=None)
-        self.smartgrid_tools = SmartGridTools(blackboard_manager=None)
-
+        
         self._tools_by_environment = {
             "MeetingSchedulingEnvironment": self.meeting_tools,
-            "PersonalAssistantEnvironment": self.personal_assistant_tools,
-            "SmartGridEnvironment": self.smartgrid_tools,
         }
+        
+        # Add optional tools if available
+        if _PERSONAL_ASSISTANT_AVAILABLE:
+            self.personal_assistant_tools = PersonalAssistantTools(blackboard_manager=None)
+            self._tools_by_environment["PersonalAssistantEnvironment"] = self.personal_assistant_tools
+        
+        if _SMARTGRID_AVAILABLE:
+            self.smartgrid_tools = SmartGridTools(blackboard_manager=None)
+            self._tools_by_environment["SmartGridEnvironment"] = self.smartgrid_tools
 
     def get_tools_for_environment(self, environment_name: str, phase: str) -> List[Dict[str, Any]]:
         """
