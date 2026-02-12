@@ -39,6 +39,10 @@ class SimpleProblemDefinition:
         self.variables = []
         self._agent_vars = {agent: [] for agent in agents}
         self.factors = []  # No factors in simplified version
+        self.description = (
+            f"Meeting scheduling task with {len(agents)} agents and {len(meetings)} meeting(s). "
+            "Coordinate to schedule meetings at earliest common available slots."
+        )
         
         # Create variables (one per agent per meeting they participate in)
         for meeting in meetings:
