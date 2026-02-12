@@ -448,15 +448,33 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
 def _get_environment_registry():
     """Return the mapping of implemented environment class names -> classes."""
     # Import here to avoid circular dependencies / heavy imports at module import time.
-    from envs.dcops.personal_assistant import PersonalAssistantEnvironment
-    from envs.dcops.smart_grid import SmartGridEnvironment
-    from envs.dcops.meeting_scheduling import MeetingSchedulingEnvironment
-
-    return {
-        MeetingSchedulingEnvironment.__name__: MeetingSchedulingEnvironment,
-        PersonalAssistantEnvironment.__name__: PersonalAssistantEnvironment,
-        SmartGridEnvironment.__name__: SmartGridEnvironment,
-    }
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    registry = {}
+    
+    # Always import MeetingScheduling (simplified, no dependencies)
+    try:
+        from envs.dcops.meeting_scheduling import MeetingSchedulingEnvironment
+        registry[MeetingSchedulingEnvironment.__name__] = MeetingSchedulingEnvironment
+    except ImportError as e:
+        logger.error(f"Failed to import MeetingSchedulingEnvironment: {e}")
+    
+    # Optional: PersonalAssistant
+    try:
+        from envs.dcops.personal_assistant import PersonalAssistantEnvironment
+        registry[PersonalAssistantEnvironment.__name__] = PersonalAssistantEnvironment
+    except ImportError:
+        logger.debug("PersonalAssistant environment not available (requires CoLLAB)")
+    
+    # Optional: SmartGrid
+    try:
+        from envs.dcops.smart_grid import SmartGridEnvironment
+        registry[SmartGridEnvironment.__name__] = SmartGridEnvironment
+    except ImportError:
+        logger.debug("SmartGrid environment not available (requires CoLLAB)")
+    
+    return registry
 
 
 def get_implemented_environment_names() -> List[str]:
