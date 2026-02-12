@@ -1,23 +1,11 @@
 """
-MeetingScheduling Environment Adaptor of MeetingScheduling Environment in CoLLAB
+MeetingScheduling Environment - Simplified Version
 
-Adaptor to integrate the MeetingScheduling domain.
-
-The MeetingScheduling environment involves agents coordinating to decide
-attendance intervals for a set of meetings on a shared timeline, following
-the updated CoLLAB benchmark.
+Simple meeting scheduling without CoLLAB dependency.
+Agents coordinate to schedule meetings at earliest common available slots.
 """
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
-# CoLLAB v2 problem-layer imports (with fallback for Colab/missing submodule)
-try:
-    from problem_layer.meeting_scheduling import MeetingSchedulingConfig, generate_instance
-    from problem_layer.base import ProblemDefinition
-except ImportError:
-    # Fallback to local minimal implementation
-    from src.simple_problem_layer import MeetingSchedulingConfig, generate_instance, SimpleProblem as ProblemDefinition
-    import logging
-    logging.getLogger(__name__).warning("⚠️ Using local fallback for problem_layer (external submodule missing)")
 
 import logging
 logger = logging.getLogger(__name__)
