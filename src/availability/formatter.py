@@ -163,7 +163,5 @@ def format_availability_table(
                 
                 row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
                 table_lines.append(row)
-            row = f"{day_label:^8}| " + " | ".join(row_values) + " |"
-            table_lines.append(row)
         
     return "\n".join(table_lines)
