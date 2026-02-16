@@ -438,3 +438,33 @@ class Megaboard:
             except Exception as e:
       
               print(f"ERROR: Failed to log action to blackboard {blackboard_id}: {e}")
+    
+    def compute_private_intersection(self, sender_slots: List[int], receiver_slots: List[int], 
+                                      total_slots: int = 12) -> List[int]:
+        """
+        Compute privacy-preserving slot intersection using Oblivious Transfer.
+        
+        This method allows two agents to find common available slots without
+        revealing their full availability to each other.
+        
+        Args:
+            sender_slots: Available slot indices for sender agent
+            receiver_slots: Available slot indices for receiver agent
+            total_slots: Total number of time slots (default: 12)
+        
+        Returns:
+            List of common available slot indices
+        
+        Example:
+            >>> megaboard = Megaboard()
+            >>> agent_a_slots = [2, 3, 4, 6, 7, 8]
+            >>> agent_b_slots = [1, 3, 5, 6, 7, 10]
+            >>> common = megaboard.compute_private_intersection(agent_a_slots, agent_b_slots)
+            >>> print(common)  # [3, 6, 7]
+        """
+        try:
+            from crypto import compute_private_intersection
+            return compute_private_intersection(sender_slots, receiver_slots, total_slots)
+        except ImportError:
+            # Fallback to simple intersection if OT not available
+            return sorted(list(set(sender_slots) & set(receiver_slots)))

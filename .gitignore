@@ -29,3 +29,15 @@ coverage/
 dashboards/public/dashboard_data.json
 
 envs/dcops/outputs
+
+# Crypto module build artifacts
+crypto/build/
+crypto/*.so
+crypto/*.pyd
+crypto/*.o
+crypto/*.a
+crypto/*.dylib
+
+# Jupyter/Colab
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
