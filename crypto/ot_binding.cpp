@@ -6,13 +6,12 @@ namespace py = pybind11;
 
 // Convert mpz_class to Python int
 py::int_ mpz_to_pyint(const mpz_class& value) {
-    return py::int_(value.get_str().c_str());
+    return py::cast(PyLong_FromString(value.get_str().c_str(), nullptr, 10));
 }
 
 // Convert Python int to mpz_class
 mpz_class pyint_to_mpz(const py::int_& value) {
-    std::string str = py::str(value);
-    return mpz_class(str);
+    return mpz_class(py::str(py::cast<py::object>(value)).cast<std::string>());
 }
 
 // Wrapper functions with Python-friendly types
