@@ -88,7 +88,8 @@ class OTManager:
             # Check if this slot is available for sender (retrieved == slot_index + 1)
             slot_idx = receiver_preferences[0][j]
             # If sender also has this slot available, the decrypted value will match
-            if int(retrieved) == sender_availability[slot_idx]:
+            # FIXED: Compare same types (str == str, not int == str)
+            if str(retrieved) == sender_availability[slot_idx]:
                 intersection.append(slot_idx)
         
         return sorted(intersection)
