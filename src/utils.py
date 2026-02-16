@@ -460,20 +460,6 @@ def _get_environment_registry():
     except ImportError as e:
         logger.error(f"Failed to import MeetingSchedulingEnvironment: {e}")
     
-    # Optional: PersonalAssistant
-    try:
-        from envs.dcops.personal_assistant import PersonalAssistantEnvironment
-        registry[PersonalAssistantEnvironment.__name__] = PersonalAssistantEnvironment
-    except ImportError:
-        logger.debug("PersonalAssistant environment not available (requires CoLLAB)")
-    
-    # Optional: SmartGrid
-    try:
-        from envs.dcops.smart_grid import SmartGridEnvironment
-        registry[SmartGridEnvironment.__name__] = SmartGridEnvironment
-    except ImportError:
-        logger.debug("SmartGrid environment not available (requires CoLLAB)")
-    
     return registry
 
 

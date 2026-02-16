@@ -9,7 +9,7 @@ simulation:
 environment:
   name: MeetingSchedulingEnvironment
   # Simple meeting scheduling (no CoLLAB dependency)
-  num_meetings: 2 # Number of meetings to schedule
+  num_meetings: 1 # Number of meetings to schedule
   timeline_length: 12 # Not used anymore (kept for compatibility)
   min_participants: 2 # Not used anymore
   max_participants: 4 # Not used anymore
@@ -72,7 +72,9 @@ llm:
         max_model_len: 4096
         trust_remote_code: true
         tool_call_parser: "hermes"
-        additional_args: []
+        additional_args:
+          - "--enforce-eager" # Disable torch.compile to avoid Triton compilation errors
+          - "--disable-frontend-multiprocessing"
 notes:
   - MeetingScheduling baseline configuration (no attacks)
   - MeetingScheduling always logs scores for each iteration

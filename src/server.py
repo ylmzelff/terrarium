@@ -34,16 +34,10 @@ def set_environment_tools(environment_name: str):
     if environment_name == "MeetingSchedulingEnvironment":
         from envs.dcops.meeting_scheduling import MeetingSchedulingTools
         environment_tools = MeetingSchedulingTools(megaboard)
-    elif environment_name == "PersonalAssistantEnvironment":
-        from envs.dcops.personal_assistant.personal_assistant_tools import PersonalAssistantTools
-        environment_tools = PersonalAssistantTools(megaboard)
-    elif environment_name == "SmartGridEnvironment":
-        from envs.dcops.smart_grid.smartgrid_tools import SmartGridTools
-        environment_tools = SmartGridTools(megaboard)
     else:
         raise ValueError(
             f"Unknown environment: {environment_name}. Supported: "
-            "MeetingSchedulingEnvironment, PersonalAssistantEnvironment, SmartGridEnvironment"
+            "MeetingSchedulingEnvironment"
         )
 
 @mcp.tool()
