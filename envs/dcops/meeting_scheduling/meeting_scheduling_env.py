@@ -146,6 +146,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             self.meeting_availabilities[meeting.meeting_id] = self._generate_availability_for_meeting(
                 meeting.participants
             )
+        
+        # Cache for meeting intersections (computed once via OT, reused everywhere)
+        self._meeting_intersections_cache = None
 
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
@@ -358,16 +361,26 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def _generate_meeting_intersections(self) -> Dict[str, Dict[str, List[int]]]:
         """
-        Generate intersection (common availability) for each meeting.
+        Generate intersection (common availability) for each meeting using OT protocol.
         
-        For each meeting, computes slots where ALL participants are available (1).
-        For 2-participant meetings: Uses privacy-preserving Oblivious Transfer (OT) protocol.
-        For 3+ participants: Falls back to classical AND operation.
+        Uses privacy-preserving Oblivious Transfer (OT) protocol to compute intersection
+        without revealing individual availability preferences. Requires exactly 2 participants.
+        
+        Results are cached after first computation to avoid re-running OT protocol.
         
         Returns:
             Dictionary mapping meeting IDs to intersection availability
+            
+        Raises:
+            ValueError: If meeting doesn't have exactly 2 participants
+            ImportError: If OT module is not available
         """
         from src.availability import AvailabilityConstants
+        
+        # Return cached result if available
+        if self._meeting_intersections_cache is not None:
+            logger.debug("Using cached meeting intersections (OT already computed)")
+            return self._meeting_intersections_cache
         
         meeting_intersections = {}
         total_slots = self.num_days * self.slots_per_day
@@ -378,134 +391,91 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             if not participants:
                 continue
             
-            # Privacy-preserving OT for 2-participant meetings
-            if len(participants) == 2:
-                try:
-                    from crypto import compute_private_intersection
-                    import time
-                    
-                    sender, receiver = participants[0], participants[1]
-                    sender_slots = [i for i in range(total_slots) if agent_slots[sender][i] == AvailabilityConstants.AVAILABLE]
-                    receiver_slots = [i for i in range(total_slots) if agent_slots[receiver][i] == AvailabilityConstants.AVAILABLE]
-                    
-                    logger.info("=" * 80)
-                    logger.info(f"🔒 PRIVACY-PRESERVING OBLIVIOUS TRANSFER (OT) PROTOCOL")
-                    logger.info("=" * 80)
-                    logger.info(f"Meeting: {meeting_id}")
-                    logger.info(f"Protocol: Priority Oblivious Transfer (5-phase)")
-                    logger.info(f"Sender: {sender} ({len(sender_slots)} available slots)")
-                    logger.info(f"Receiver: {receiver} ({len(receiver_slots)} available slots)")
-                    logger.info(f"Total slots: {total_slots}")
-                    logger.info("-" * 80)
-                    logger.info(f"Input (Sender {sender}): {sender_slots}")
-                    logger.info(f"Input (Receiver {receiver}): {receiver_slots}")
-                    logger.info("-" * 80)
-                    logger.info("Executing OT phases: Setup → GenQuery → GenRes → oblFilter → Retrieve")
-                    
-                    start_time = time.time()
-                    
-                    # OT returns intersection indices
-                    common_indices = compute_private_intersection(sender_slots, receiver_slots, total_slots)
-                    
-                    ot_duration = time.time() - start_time
-                    
-                    # Convert indices back to slot array
-                    intersection = [AvailabilityConstants.BUSY] * total_slots
-                    for idx in common_indices:
-                        intersection[idx] = AvailabilityConstants.AVAILABLE
-                    
-                    logger.info(f"✓ OT Protocol Complete (Duration: {ot_duration:.4f}s)")
-                    logger.info("-" * 80)
-                    logger.info(f"📊 RESULTS:")
-                    logger.info(f"   Common slots found: {len(common_indices)}/{total_slots}")
-                    logger.info(f"   Intersection indices: {common_indices}")
-                    logger.info(f"   Privacy guarantee: ✓ NO individual availability disclosed")
-                    logger.info(f"   {sender} does NOT know {receiver}'s individual slots")
-                    logger.info(f"   {receiver} does NOT know {sender}'s individual slots")
-                    logger.info(f"   Both parties ONLY know: {common_indices} (intersection)")
-                    logger.info("=" * 80)
-                    
-                except ImportError as e:
-                    logger.warning("=" * 80)
-                    logger.warning(f"⚠️ OT MODULE NOT AVAILABLE")
-                    logger.warning("=" * 80)
-                    logger.warning(f"Meeting: {meeting_id}")
-                    logger.warning(f"Reason: {e}")
-                    logger.warning(f"Fallback: Using classical AND intersection (NO PRIVACY)")
-                    logger.warning(f"To enable OT: cd crypto && python setup.py install")
-                    logger.warning("=" * 80)
-                    # Fallback to classical AND
-                    intersection = self._compute_classical_intersection(agent_slots, participants, total_slots)
-                except Exception as e:
-                    logger.error("=" * 80)
-                    logger.error(f"❌ OT PROTOCOL FAILED")
-                    logger.error("=" * 80)
-                    logger.error(f"Meeting: {meeting_id}")
-                    logger.error(f"Error: {e}")
-                    logger.error(f"Fallback: Using classical AND intersection (NO PRIVACY)")
-                    logger.error("=" * 80)
-                    # Fallback to classical AND
-                    intersection = self._compute_classical_intersection(agent_slots, participants, total_slots)
-            else:
-                # 3+ participants: use classical AND (TODO: extend OT for multiple parties)
-                if len(participants) > 2:
-                    logger.info("=" * 80)
-                    logger.info(f"🔓 CLASSICAL INTERSECTION (NO PRIVACY)")
-                    logger.info("=" * 80)
-                    logger.info(f"Meeting: {meeting_id}")
-                    logger.info(f"Participants: {len(participants)} agents ({', '.join(participants)})")
-                    logger.info(f"Method: Classical AND operation")
-                    logger.info(f"Privacy: ⚠️ All availability data visible to all participants")
-                    logger.info(f"Note: Multi-party OT not yet implemented")
-                    logger.info("=" * 80)
-                intersection = self._compute_classical_intersection(agent_slots, participants, total_slots)
-                if len(participants) > 2:
-                    common_count = sum(intersection)
-                    logger.info(f"✓ Found {common_count}/{total_slots} common slots")
-                    logger.info("=" * 80)
+            # Privacy-preserving OT protocol (REQUIRED - no fallback)
+            if len(participants) != 2:
+                raise ValueError(
+                    f"Meeting {meeting_id} has {len(participants)} participants. "
+                    f"OT protocol requires exactly 2 participants. "
+                    f"Multi-party OT not yet implemented."
+                )
+            
+            # Import OT module (fail fast if not available)
+            try:
+                from crypto import compute_private_intersection
+            except ImportError as e:
+                raise ImportError(
+                    f"OT module not available. This is REQUIRED for privacy-preserving intersection.\n"
+                    f"Install with: cd crypto && python setup.py install\n"
+                    f"Original error: {e}"
+                ) from e
+            
+            import time
+            
+            sender, receiver = participants[0], participants[1]
+            # Use binary arrays directly (0/1 availability)
+            sender_availability = agent_slots[sender]
+            receiver_availability = agent_slots[receiver]
+            
+            # Extract indices for logging
+            sender_indices = [i for i in range(total_slots) if sender_availability[i] == AvailabilityConstants.AVAILABLE]
+            receiver_indices = [i for i in range(total_slots) if receiver_availability[i] == AvailabilityConstants.AVAILABLE]
+            
+            logger.info("=" * 80)
+            logger.info(f"🔒 PRIVACY-PRESERVING OBLIVIOUS TRANSFER (OT) PROTOCOL")
+            logger.info("=" * 80)
+            logger.info(f"Meeting: {meeting_id}")
+            logger.info(f"Protocol: Priority Oblivious Transfer (5-phase)")
+            logger.info(f"Sender: {sender} ({len(sender_indices)} available slots)")
+            logger.info(f"Receiver: {receiver} ({len(receiver_indices)} available slots)")
+            logger.info(f"Total slots: {total_slots}")
+            logger.info("-" * 80)
+            logger.info(f"Input (Sender {sender} binary):   {sender_availability}")
+            logger.info(f"Input (Receiver {receiver} binary): {receiver_availability}")
+            logger.info(f"Sender available indices:          {sender_indices}")
+            logger.info(f"Receiver available indices:        {receiver_indices}")
+            logger.info("-" * 80)
+            logger.info("Executing OT phases: Setup → GenQuery → GenRes → oblFilter → Retrieve")
+            
+            start_time = time.time()
+            
+            # OT returns intersection indices directly (NO fallback, NO classical AND)
+            common_indices = compute_private_intersection(sender_availability, receiver_availability, total_slots)
+            
+            ot_duration = time.time() - start_time
+            
+            # Convert indices back to slot array
+            intersection = [AvailabilityConstants.BUSY] * total_slots
+            for idx in common_indices:
+                intersection[idx] = AvailabilityConstants.AVAILABLE
+            
+            logger.info(f"✓ OT Protocol Complete (Duration: {ot_duration:.4f}s)")
+            logger.info("-" * 80)
+            logger.info(f"📊 RESULTS:")
+            logger.info(f"   Common slots found: {len(common_indices)}/{total_slots}")
+            logger.info(f"   Intersection indices: {common_indices}")
+            logger.info(f"   Privacy guarantee: ✓ NO individual availability disclosed")
+            logger.info(f"   {sender} does NOT know {receiver}'s individual slots")
+            logger.info(f"   {receiver} does NOT know {sender}'s individual slots")
+            logger.info(f"   Both parties ONLY know: {common_indices} (intersection)")
+            logger.info("=" * 80)
             
             meeting_intersections[meeting_id] = intersection
         
+        # Cache the results for reuse
+        self._meeting_intersections_cache = meeting_intersections
+        logger.debug(f"Cached meeting intersections for {len(meeting_intersections)} meeting(s)")
+        
         return meeting_intersections
-    
-    def _compute_classical_intersection(self, agent_slots: Dict[str, List[int]], participants: List[str], total_slots: int) -> List[int]:
-        """
-        Compute intersection using classical AND operation (no privacy guarantee).
-        
-        Args:
-            agent_slots: Dictionary mapping agent names to availability arrays
-            participants: List of participant agent names
-            total_slots: Total number of time slots
-            
-        Returns:
-            Intersection availability array
-        """
-        from src.availability import AvailabilityConstants
-        
-        logger.debug(f"Computing classical AND intersection for {len(participants)} participants")
-        
-        # Initialize intersection with all 1s (available)
-        intersection = [AvailabilityConstants.AVAILABLE] * total_slots
-        
-        # AND operation: slot is 1 only if ALL participants have 1
-        for participant in participants:
-            participant_slots = agent_slots[participant]
-            for i in range(total_slots):
-                if i < len(participant_slots):
-                    # If any participant is busy (0), intersection is busy (0)
-                    intersection[i] = intersection[i] & participant_slots[i]
-        
-        common_indices = [i for i, val in enumerate(intersection) if val == AvailabilityConstants.AVAILABLE]
-        logger.debug(f"Classical intersection result: {len(common_indices)} common slots at {common_indices}")
-        
-        return intersection
 
     async def _async_log_availability_table(self) -> None:
         """
         Log agent availability table to all relevant blackboards during planning phase via MCP.
         
-        Shows availability for each meeting separately since each meeting has
-        different availability patterns and intersection indices.
+        Uses OT protocol to compute privacy-preserving intersections for each meeting,
+        then logs both individual agent availability and meeting-specific intersection
+        tables to relevant blackboards.
+        
+        Each meeting must have exactly 2 participants for OT protocol.
         """
         from src.availability import AvailabilityConstants
         
@@ -700,10 +670,14 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             Dictionary with serializable environment state
         """
         meetings: Dict[str, Any] = {}
+        total_slots = self.num_days * self.slots_per_day
         for meeting in self.instance.meetings:
             meetings[meeting.meeting_id] = {
                 "title": meeting.title,
                 "participants": list(meeting.participants),
+                "start": 0,
+                "end": total_slots,
+                "meeting_type": "soft",
             }
 
         return {

@@ -21,8 +21,9 @@ class MeetingSchedulingPrompts:
             execution_tool_lines=[
                 "- attend_meeting(meeting_id: str, interval: str): "
                 "Schedule your attendance at a specific time slot. "
-                "interval should be the SLOT NUMBER from the availability table (e.g., '1' for Slot 1, '4' for Slot 4). "
-                "IMPORTANT: Always select the SMALLEST slot number where intersection = 1."
+                "interval should be the SLOT NUMBER where intersection = 1 (e.g., '2' for Slot 2, '3' for Slot 3). "
+                "IMPORTANT: Check the MEETING-SPECIFIC COMMON AVAILABILITY table. "
+                "Select the SMALLEST slot number where value = 1 in the meeting intersection row."
             ],
             planning_header="Planning phase tools (blackboard coordination only):",
             execution_header="Execution phase tools (blackboard + attendance decisions):",
@@ -40,9 +41,9 @@ TASK:
 - Other agents have their own availability arrays.
 - The system calculates the INTERSECTION (common available slots) between all participants.
 - Your goal: Schedule the meeting at the EARLIEST common available slot.
-  → Look for slots where intersection = 1
-  → Select the SMALLEST slot number (e.g., Slot 1 comes before Slot 11)
-  → Example: If Slot 1, Slot 4, Slot 11 are available, you MUST select Slot 1
+  → Look for slots where intersection = 1 in the MEETING-SPECIFIC COMMON AVAILABILITY table
+  → Select the SMALLEST slot number (e.g., Slot 2 comes before Slot 3)
+  → Example: If "Meeting 1" row shows Slot 2=1, Slot 3=1, Slot 7=1, you MUST select interval='2'
 
 PHASES:
 - Planning Phase: Use blackboards to discuss and identify the earliest common available slot.
@@ -51,10 +52,10 @@ PHASES:
 RULES:
 - You may only schedule meetings you participate in.
 - Check the MEETING-SPECIFIC COMMON AVAILABILITY section in the availability table.
-- Find ALL slots where intersection = 1 (all participants available).
-- Select the slot with the SMALLEST NUMBER (Slot 1 < Slot 2 < ... < Slot 12).
+- Find the row for your meeting. It shows where ALL participants are available (value = 1).
+- Select the slot with the SMALLEST NUMBER where value = 1 in that meeting's row.
 - Use attend_meeting(meeting_id, interval='SLOT_NUMBER') to commit.
-- Example: If Slot 1=1 and Slot 11=1, choose interval='1' (NOT '11')."""
+- Example: If Meeting 1 row shows Slot 2=1, Slot 5=1, Slot 7=1, choose interval='2' (NOT '5' or '7')."""
 
         system_text = (self.tool_instruction_data or {}).get("system")
         if system_text:
@@ -166,9 +167,10 @@ RULES:
                 [
                     "=== CURRENT PHASE: EXECUTION ===",
                     "Commit your attendance using attend_meeting(meeting_id, interval='SLOT_NUMBER').",
-                    "Use the SMALLEST slot number from the intersection where value = 1.",
-                    "Example: If Slot 1, Slot 4, Slot 11 show '1', use interval='1' (NOT 'skip').",
-                    "NEVER use interval='skip' if any common slots exist.",
+                    "CRITICAL: Look at the MEETING-SPECIFIC COMMON AVAILABILITY section above.",
+                    "Find the row for your meeting. Use the SMALLEST slot number where value = 1.",
+                    "Example: If Meeting 1 row shows Slot 2=1, Slot 3=1, Slot 7=1, use interval='2' (NOT '3' or '7').",
+                    "NEVER use interval='skip' if any common slots (value=1) exist in the meeting row.",
                     "",
                 ]
             )

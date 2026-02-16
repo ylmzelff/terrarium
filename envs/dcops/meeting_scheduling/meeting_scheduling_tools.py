@@ -104,7 +104,25 @@ class MeetingSchedulingTools:
 
         meeting_type = str(meeting.get("meeting_type", "soft"))
         allowed = self._allowed_intervals(start, end, meeting_type)
-        if interval not in allowed:
+        
+        # Support single slot format (e.g., "3" means attend only slot 3)
+        # NOTE: Agents see 1-indexed "Slot 1, Slot 2, ..." in blackboard display
+        # but code uses 0-indexed arrays internally.
+        # When agent says interval="2" (meaning "Slot 2" from display),
+        # convert to 0-indexed: "2" → index 1 → "1-2" interval
+        normalized_interval = interval
+        if interval.isdigit():
+            # Convert from 1-indexed display to 0-indexed interval
+            display_slot_num = int(interval)
+            array_index = display_slot_num - 1  # Slot 2 → index 1
+            
+            if start <= array_index < end:
+                normalized_interval = f"{array_index}-{array_index + 1}"
+            else:
+                # Out of bounds - keep original for error message
+                normalized_interval = f"{display_slot_num}-{display_slot_num + 1}"
+        
+        if normalized_interval not in allowed:
             sample = ", ".join(sorted(list(allowed))[:5])
             return {
                 "status": "retry",
@@ -113,7 +131,7 @@ class MeetingSchedulingTools:
             }
 
         updated_attendance = dict(attendance)
-        updated_attendance[var_name] = interval
+        updated_attendance[var_name] = normalized_interval
 
         total_vars = env_state.get("total_variables")
         if total_vars is None:
@@ -131,7 +149,7 @@ class MeetingSchedulingTools:
                 "window": [start, end],
                 "participants": participants,
             },
-            "interval": interval,
+            "interval": normalized_interval,
             "total_assigned": len(updated_attendance),
             "remaining_variables": int(total_vars) - len(updated_attendance),
             "state_updates": {"attendance": updated_attendance},
