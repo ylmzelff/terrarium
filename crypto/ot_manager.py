@@ -101,16 +101,20 @@ class OTManager:
         logger.info("📍 PHASE 1: SETUP - Receiver generates random encryption keys")
         logger.info("=" * 100)
         logger.info(f"   Input to pyot.setup():")
-        logger.info(f"      number_of_OT = {number_of_OT}")
-        logger.info(f"      n = {n}")
-        logger.info(f"      bit_size = {self.bit_size}")
+        logger.info(f"      number_of_OT = {number_of_OT} (type: {type(number_of_OT).__name__})")
+        logger.info(f"      n = {n} (type: {type(n).__name__})")
+        logger.info(f"      bit_size = {self.bit_size} (type: {type(self.bit_size).__name__})")
+        logger.info(f"   🔄 CALLING: pyot.setup({number_of_OT}, {n}, {self.bit_size})...")
         
         r = pyot.setup(number_of_OT, n, self.bit_size)
         
-        logger.info(f"   Output from pyot.setup():")
+        logger.info(f"   ✅ RETURNED from pyot.setup():")
         logger.info(f"      Type: {type(r)}")
         logger.info(f"      Length: {len(r) if hasattr(r, '__len__') else 'N/A'}")
         logger.info(f"      First element type: {type(r[0]) if hasattr(r, '__getitem__') else 'N/A'}")
+        if hasattr(r, '__getitem__') and hasattr(r[0], '__len__'):
+            logger.info(f"      r[0] length: {len(r[0])}")
+            logger.info(f"      Sample r[0][0]: {r[0][0] if len(r[0]) > 0 else 'empty'}")
         logger.info(f"   ✓ Random keys generated for {n} slots")
         
         # Phase 2: Receiver generates query
@@ -119,22 +123,28 @@ class OTManager:
         logger.info("📍 PHASE 2: GEN_QUERY - Receiver generates oblivious queries")
         logger.info("=" * 100)
         logger.info(f"   Input to pyot.gen_query():")
-        logger.info(f"      number_of_OT = {number_of_OT}")
-        logger.info(f"      p_size = {p_size}")
+        logger.info(f"      number_of_OT = {number_of_OT} (type: {type(number_of_OT).__name__})")
+        logger.info(f"      p_size = {p_size} (type: {type(p_size).__name__})")
         logger.info(f"      receiver_preferences = {receiver_preferences}")
-        logger.info(f"      n = {n}")
+        logger.info(f"      receiver_preferences[0] = {receiver_preferences[0]}")
+        logger.info(f"      n = {n} (type: {type(n).__name__})")
         logger.info(f"      y = [[]] (output parameter for blinding factors)")
+        logger.info(f"   🔄 CALLING: pyot.gen_query({number_of_OT}, {p_size}, {receiver_preferences}, {n}, y)...")
         
         y = [[]]  # Output parameter
         w = pyot.gen_query(number_of_OT, p_size, receiver_preferences, n, y)
         
-        logger.info(f"   Output from pyot.gen_query():")
+        logger.info(f"   ✅ RETURNED from pyot.gen_query():")
         logger.info(f"      w (queries) type: {type(w)}")
         logger.info(f"      w length: {len(w) if hasattr(w, '__len__') else 'N/A'}")
         logger.info(f"      w[0] length: {len(w[0]) if hasattr(w, '__getitem__') and hasattr(w[0], '__len__') else 'N/A'}")
+        if hasattr(w, '__getitem__') and hasattr(w[0], '__len__') and len(w[0]) > 0:
+            logger.info(f"      Sample w[0][0]: {w[0][0]}")
         logger.info(f"      y (blinding factors) type: {type(y)}")
         logger.info(f"      y length: {len(y) if hasattr(y, '__len__') else 'N/A'}")
         logger.info(f"      y[0] length: {len(y[0]) if hasattr(y, '__getitem__') and hasattr(y[0], '__len__') else 'N/A'}")
+        if hasattr(y, '__getitem__') and hasattr(y[0], '__len__') and len(y[0]) > 0:
+            logger.info(f"      Sample y[0][0]: {y[0][0]}")
         logger.info(f"   ✓ Generated {p_size} oblivious queries (receiver wants slots: {receiver_indices})")
         
         # Phase 3: Sender generates encrypted response
@@ -143,17 +153,21 @@ class OTManager:
         logger.info("📍 PHASE 3: GEN_RES - Sender encrypts their availability")
         logger.info("=" * 100)
         logger.info(f"   Input to pyot.gen_res():")
-        logger.info(f"      sender_messages = {sender_messages}")
+        logger.info(f"      sender_messages = {sender_messages} (type: {type(sender_messages).__name__})")
+        logger.info(f"      sender_messages length: {len(sender_messages)}")
         logger.info(f"      number_of_OT = {number_of_OT}")
-        logger.info(f"      r (from phase 1) = {type(r)} (keys)")
-        logger.info(f"      w (from phase 2) = {type(w)} (queries)")
+        logger.info(f"      r (from phase 1) = type {type(r)}, length {len(r) if hasattr(r, '__len__') else 'N/A'}")
+        logger.info(f"      w (from phase 2) = type {type(w)}, length {len(w) if hasattr(w, '__len__') else 'N/A'}")
+        logger.info(f"   🔄 CALLING: pyot.gen_res(sender_messages, {number_of_OT}, r, w)...")
         
         res_s = pyot.gen_res(sender_messages, number_of_OT, r, w)
         
-        logger.info(f"   Output from pyot.gen_res():")
+        logger.info(f"   ✅ RETURNED from pyot.gen_res():")
         logger.info(f"      res_s type: {type(res_s)}")
         logger.info(f"      res_s length: {len(res_s) if hasattr(res_s, '__len__') else 'N/A'}")
         logger.info(f"      res_s[0] length: {len(res_s[0]) if hasattr(res_s, '__getitem__') and hasattr(res_s[0], '__len__') else 'N/A'}")
+        if hasattr(res_s, '__getitem__') and hasattr(res_s[0], '__len__') and len(res_s[0]) > 0:
+            logger.info(f"      Sample res_s[0][0]: {res_s[0][0]}")
         logger.info(f"   ✓ Sender encrypted {len(sender_messages)} messages")
         logger.info(f"   🔐 Privacy: Receiver cannot decrypt all {n} slots, only their {p_size} queries!")
         
@@ -165,15 +179,18 @@ class OTManager:
         logger.info(f"   Input to pyot.obl_filter():")
         logger.info(f"      number_of_OT = {number_of_OT}")
         logger.info(f"      p_size = {p_size}")
-        logger.info(f"      res_s (from phase 3) = {type(res_s)}")
-        logger.info(f"      y (from phase 2) = {type(y)} (blinding factors)")
+        logger.info(f"      res_s (from phase 3) = type {type(res_s)}, length {len(res_s) if hasattr(res_s, '__len__') else 'N/A'}")
+        logger.info(f"      y (from phase 2) = type {type(y)}, length {len(y) if hasattr(y, '__len__') else 'N/A'}")
+        logger.info(f"   🔄 CALLING: pyot.obl_filter({number_of_OT}, {p_size}, res_s, y)...")
         
         res_h = pyot.obl_filter(number_of_OT, p_size, res_s, y)
         
-        logger.info(f"   Output from pyot.obl_filter():")
+        logger.info(f"   ✅ RETURNED from pyot.obl_filter():")
         logger.info(f"      res_h type: {type(res_h)}")
         logger.info(f"      res_h length: {len(res_h) if hasattr(res_h, '__len__') else 'N/A'}")
         logger.info(f"      res_h[0] length: {len(res_h[0]) if hasattr(res_h, '__getitem__') and hasattr(res_h[0], '__len__') else 'N/A'}")
+        if hasattr(res_h, '__getitem__') and hasattr(res_h[0], '__len__') and len(res_h[0]) > 0:
+            logger.info(f"      Sample res_h[0][0]: {res_h[0][0]}")
         logger.info(f"   ✓ Filtered to {p_size} encrypted responses (one per receiver query)")
         
         # Phase 5: Receiver retrieves results
@@ -191,16 +208,19 @@ class OTManager:
             logger.info(f"   Query #{j+1}/{p_size}:")
             logger.info(f"      Receiver querying slot index: {slot_idx}")
             logger.info(f"      Input to pyot.retreive():")
-            logger.info(f"         res_h[0][{j}] (encrypted response)")
-            logger.info(f"         j = {j}")
-            logger.info(f"         r[0] (receiver's key)")
-            logger.info(f"         preference[{j}] = {slot_idx}")
+            logger.info(f"         res_h[0][{j}] = {res_h[0][j]} (encrypted response)")
+            logger.info(f"         j = {j} (query index)")
+            logger.info(f"         r[0] = {type(r[0])} (receiver's key)")
+            logger.info(f"         receiver_preferences[0] = {receiver_preferences[0]}")
+            logger.info(f"      🔄 CALLING: pyot.retreive(res_h[0][{j}], {j}, r[0], {receiver_preferences[0]})...")
             
             retrieved = pyot.retreive(res_h[0][j], j, r[0], receiver_preferences[0])
             
-            logger.info(f"      Output from pyot.retreive():")
+            logger.info(f"      ✅ RETURNED from pyot.retreive():")
             logger.info(f"         retrieved = '{retrieved}' (type: {type(retrieved).__name__})")
             logger.info(f"         sender_messages[{slot_idx}] = '{sender_messages[slot_idx]}'")
+            logger.info(f"         sender_availability[{slot_idx}] = {sender_availability[slot_idx]}")
+            logger.info(f"         receiver_availability[{slot_idx}] = {receiver_availability[slot_idx]}")
             
             # Check if this slot is available for sender (retrieved == slot_index)
             # If sender also has this slot available, the decrypted value will match
