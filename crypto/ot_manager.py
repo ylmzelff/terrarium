@@ -128,11 +128,10 @@ class OTManager:
         logger.info(f"      receiver_preferences = {receiver_preferences}")
         logger.info(f"      receiver_preferences[0] = {receiver_preferences[0]}")
         logger.info(f"      n = {n} (type: {type(n).__name__})")
-        logger.info(f"      y = [[]] (output parameter for blinding factors)")
-        logger.info(f"   🔄 CALLING: pyot.gen_query({number_of_OT}, {p_size}, {receiver_preferences}, {n}, y)...")
+        logger.info(f"   🔄 CALLING: pyot.gen_query({number_of_OT}, {p_size}, {receiver_preferences}, {n})...")
         
-        y = [[]]  # Output parameter
-        w = pyot.gen_query(number_of_OT, p_size, receiver_preferences, n, y)
+        # Call gen_query - now returns tuple (w, y)
+        w, y = pyot.gen_query(number_of_OT, p_size, receiver_preferences, n)
         
         logger.info(f"   ✅ RETURNED from pyot.gen_query():")
         logger.info(f"      w (queries) type: {type(w)}")

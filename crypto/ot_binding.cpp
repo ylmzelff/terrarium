@@ -110,6 +110,18 @@ std::string retreive_wrapper(
     return result.get_str();
 }
 
+// Wrapper for genQuery to return both w and y (since y is modified by reference in C++)
+std::pair<std::vector<std::vector<int>>, std::vector<std::vector<int>>> genQuery_wrapper(
+    int number_of_OT,
+    int p_size,
+    const std::vector<std::vector<int>>& p,
+    int n) {
+    
+    std::vector<std::vector<int>> y;  // Will be populated by genQuery
+    auto w = genQuery(number_of_OT, p_size, p, n, y);
+    return std::make_pair(w, y);
+}
+
 PYBIND11_MODULE(pyot, m) {
     m.doc() = "Priority Oblivious Transfer protocol for privacy-preserving slot intersection";
     
@@ -117,9 +129,9 @@ PYBIND11_MODULE(pyot, m) {
           "Phase 1: Generate random encryption keys",
           py::arg("number_of_OT"), py::arg("n"), py::arg("bit_size"));
     
-    m.def("gen_query", &genQuery,
-          "Phase 2: Generate query and permutation vectors",
-          py::arg("number_of_OT"), py::arg("p_size"), py::arg("p"), py::arg("n"), py::arg("y"));
+    m.def("gen_query", &genQuery_wrapper,
+          "Phase 2: Generate query and permutation vectors (returns tuple: w, y)",
+          py::arg("number_of_OT"), py::arg("p_size"), py::arg("p"), py::arg("n"));
     
     m.def("gen_res", &GenRes_wrapper,
           "Phase 3: Generate encrypted response",

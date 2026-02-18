@@ -280,10 +280,12 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
         """
-        Generate availability arrays for a specific meeting.
+        Generate REALISTIC random availability arrays for a specific meeting.
         
-        Each meeting gets its own random intersection indices, ensuring agents
-        have different availability patterns across different meetings.
+        IMPORTANT: This function does NOT pre-compute intersection!
+        The OT protocol will discover the intersection during execution.
+        This reflects real-world scenarios where agents independently have schedules
+        and the system does not know their common availability beforehand.
         
         Args:
             participants: List of agent names participating in this meeting
@@ -296,53 +298,41 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         # Get configuration parameters
         total_slots = self.num_days * self.slots_per_day
-        intersection_count = self.env_config.get('intersection', total_slots // 2)
-        
-        # Validate intersection parameter
-        if intersection_count > total_slots:
-            logger.warning(
-                f"Intersection count {intersection_count} exceeds total slots {total_slots}. "
-                f"Setting intersection to {total_slots}"
-            )
-            intersection_count = total_slots
-        
-        # Randomly select intersection indices for THIS meeting
-        # Different meetings will have different intersection indices
-        intersection_indices = sorted(random.sample(range(total_slots), intersection_count))
+        availability_rate = self.env_config.get('availability_rate', 0.4)  # 40% default
         
         logger.info(
-            f"Meeting availability: {total_slots} total slots, "
-            f"{intersection_count} common slots at indices: {intersection_indices}"
+            f"Generating realistic availability: {total_slots} total slots, "
+            f"{availability_rate*100:.0f}% availability rate per agent"
         )
         
         availability = {}
         
-        # Generate availability for each participant in this meeting
+        # Generate INDEPENDENT random availability for each participant
+        # NO pre-determined intersection - OT protocol will find it!
         for agent_name in participants:
-            # Initialize all slots randomly (each agent gets unique pattern)
             slots = []
             
             for idx in range(total_slots):
-                if idx in intersection_indices:
-                    # Guaranteed common slot - must be available (1) for all participants
-                    slots.append(AvailabilityConstants.AVAILABLE)
-                else:
-                    # Non-intersection slot - randomly 0 or 1 (different for each agent)
-                    # 30% chance of being available (creates realistic sparse schedules)
-                    is_available = random.random() < 0.3
-                    slots.append(
-                        AvailabilityConstants.AVAILABLE if is_available 
-                        else AvailabilityConstants.BUSY
-                    )
+                # Each slot is independently random for each agent
+                # This simulates real-world scenarios where agents have
+                # independent schedules and conflicts
+                is_available = random.random() < availability_rate
+                slots.append(
+                    AvailabilityConstants.AVAILABLE if is_available 
+                    else AvailabilityConstants.BUSY
+                )
             
             availability[agent_name] = slots
             
             # Log agent availability summary
             available_count = sum(slots)
-            unique_available = available_count - intersection_count
+            available_indices = [i for i, val in enumerate(slots) if val == 1]
             logger.info(
-                f"  {agent_name}: {available_count}/{total_slots} available "
-                f"({intersection_count} common, {unique_available} unique)"
+                f"  {agent_name}: {available_count}/{total_slots} available slots"
+            )
+            logger.debug(f"    Available indices: {available_indices}")
+            logger.info(
+                f"    ⚠️  Intersection UNKNOWN - will be computed by OT protocol"
             )
         
         return availability

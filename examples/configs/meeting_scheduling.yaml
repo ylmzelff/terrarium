@@ -17,7 +17,9 @@ environment:
   # Availability table configuration
   num_days: 1 # Number of days to show in availability table
   slots_per_day: 12 # Number of time slots per day
-  intersection: 3 # Number of common available slots (where all agents have 1)
+  availability_rate:
+    0.4 # Probability that each agent is available for each slot (40% default)
+    # OT protocol will discover actual intersection - NOT pre-determined!
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random
