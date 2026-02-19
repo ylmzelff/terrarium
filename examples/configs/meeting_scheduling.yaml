@@ -16,7 +16,7 @@ environment:
   soft_meeting_ratio: 0.6 # Not used anymore
   # Availability table configuration
   num_days: 1 # Number of days to show in availability table
-  slots_per_day: 12 # Number of time slots per day
+  slots_per_day: 6 # Number of time slots per day (reduced to fit 2048 token limit)
   availability_rate:
     0.4 # Probability that each agent is available for each slot (40% default)
     # OT protocol will discover actual intersection - NOT pre-determined!
@@ -63,15 +63,15 @@ llm:
     health_check_path: "/models"
     startup_timeout: 600 # Increased for Colab (was 420)
     params:
-      max_tokens: 512 # Reduced from 1024 to fit in 4096 context window
+      max_tokens: 256 # Reduced to fit in 2048 token context (1.5B model)
       temperature: 0.7
     models:
-      - checkpoint: "Qwen/Qwen2.5-3B-Instruct"
+      - checkpoint: "Qwen/Qwen2.5-1.5B-Instruct"
         host: "127.0.0.1"
         port: 8020
         tensor_parallel_size: 1
         gpu_memory_utilization: 0.70
-        max_model_len: 4096
+        max_model_len: 2048
         trust_remote_code: true
         tool_call_parser: "hermes"
         additional_args:

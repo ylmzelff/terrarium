@@ -30,8 +30,9 @@ vector<vector<mpz_class>> Setup(int number_of_OT, int n, unsigned int bit_size) 
 // Helper: Create index map for fast lookup
 unordered_map<int, int> createIndexMap(const vector<int>& v) {
     unordered_map<int, int> indexMap;
-    for (int i = 0; i < v.size(); ++i) {
-        indexMap[v[i]] = i;
+    // DÜZELTME: i için size_t kullanılarak v.size() ile tip uyumu sağlandı.
+    for (size_t i = 0; i < v.size(); ++i) {
+        indexMap[v[i]] = (int)i;
     }
     return indexMap;
 }
@@ -62,8 +63,9 @@ vector<vector<int>> genQuery(int number_of_OT, int p_size, vector<vector<int>> p
         } else {
             unordered_map<int, int> map;
             map.reserve(n);
-            for (int j = 0; j < n; ++j) {
-                map[v[j]] = j;
+            // DÜZELTME: j için size_t kullanıldı.
+            for (size_t j = 0; j < (size_t)n; ++j) {
+                map[v[j]] = (int)j;
             }
             for (int j = 0; j < t; ++j) {
                 y[i][j] = map[p[i][j]];
@@ -83,7 +85,7 @@ vector<vector<mpz_class>> GenRes(const vector<mpz_class>& m, int number_of_OT,
         unordered_map<int, int> indexMap = createIndexMap(w[j]);
         for (size_t i = 0; i < m_size; ++i) {
             mpz_class xor_result = m[i] ^ r[j][i];
-            auto it = indexMap.find(i);
+            auto it = indexMap.find((int)i);
             if (it != indexMap.end()) {
                 int y_i = it->second;
                 x[j][y_i] = xor_result;
@@ -98,7 +100,7 @@ vector<vector<mpz_class>> GenRes(const vector<mpz_class>& m, int number_of_OT,
 
 // Phase 4: Oblivious Filter - Filter encrypted messages
 vector<vector<mpz_class>> oblFilter(int number_of_OT, int p_size, 
-                                     const vector<vector<mpz_class>>& res_s, const vector<vector<int>>& y) {
+                                       const vector<vector<mpz_class>>& res_s, const vector<vector<int>>& y) {
     vector<vector<mpz_class>> res(number_of_OT, vector<mpz_class>(p_size));
     for (int j = 0; j < number_of_OT; ++j) {
         for (int i = 0; i < p_size; ++i) {
@@ -110,7 +112,8 @@ vector<vector<mpz_class>> oblFilter(int number_of_OT, int p_size,
 
 // Phase 5: Retrieve - Decrypt message
 mpz_class retreive(const mpz_class& res_h, int j, const vector<mpz_class>& r, const vector<int>& p) {
-    if (j >= p.size()) {
+    // DÜZELTME: j'nin p.size() ile güvenli karşılaştırması için casting yapıldı.
+    if (j < 0 || (size_t)j >= p.size()) {
         throw runtime_error("Priority index out of range");
     }
     return res_h ^ r[p[j]];
