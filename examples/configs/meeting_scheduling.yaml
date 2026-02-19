@@ -32,23 +32,38 @@ communication_network:
   consolidate_channels: true
 llm:
   # Provider: "openai", "anthropic", "gemini", "together", "vllm", "huggingface", or "mock"
-  # RECOMMENDED: "huggingface" - Ücretsiz, API key gerektirmez!
+  # COLAB İÇİN: "huggingface" - Ücretsiz, API key gerektirmez, tool calling destekler!
+  # NOT: Geliştirilmiş HuggingFaceClient artık tool calling'i JSON parsing ile destekliyor
   provider: "huggingface"
 
-  # Hugging Face - ÜCRETSİZ, API KEY GEREKTİRMEZ! 🎉
+  # Hugging Face - ÜCRETSİZ + TOOL CALLING DESTEĞİ! 🎉
   # Modeller otomatik olarak Hugging Face Hub'dan indirilir
-  # İlk çalıştırma yavaş (model indirme), sonraki çalıştırmalar hızlı (cache)
+  # Tool calling için JSON parsing kullanılır (model'in structured output vermesi gerekir)
   huggingface:
-    # Önerilen modeller:
-    # Küçük (hızlı): "Qwen/Qwen2.5-1.5B-Instruct", "google/gemma-2b-it", "microsoft/phi-2"
-    # Orta (dengeli): "Qwen/Qwen2.5-3B-Instruct", "meta-llama/Llama-3.2-3B-Instruct"
-    # Büyük (kaliteli): "Qwen/Qwen2.5-7B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3"
-    model: "Qwen/Qwen2.5-3B-Instruct"
+    # Tool calling için en iyi modeller (güç sırasına göre):
+    
+    # 🚀 COLAB T4 GPU İÇİN EN İYİ SEÇİM:
+    model: "Qwen/Qwen2.5-7B-Instruct"  # 7B - Mükemmel denge (ÖNERİLEN!)
+    
+    # Diğer güçlü seçenekler:
+    # ⭐⭐⭐ "Qwen/Qwen2.5-14B-Instruct" - 14B - Çok güçlü (Colab'da biraz yavaş ama çalışır)
+    # ⭐⭐⭐ "Qwen/Qwen2.5-32B-Instruct" - 32B - En güçlü (Quantization gerekebilir)
+    # ⭐⭐ "meta-llama/Llama-3.1-8B-Instruct" - 8B - Meta'nın modeli
+    # ⭐⭐ "mistralai/Mistral-7B-Instruct-v0.3" - 7B - Popüler, iyi
+    # ⭐ "Qwen/Qwen2.5-3B-Instruct" - 3B - Hızlı ama daha az güçlü
+    # ⭐ "Qwen/Qwen2.5-1.5B-Instruct" - 1.5B - En hızlı, en hafif
+    
+    # MODEL BOYUTU REHBERİ:
+    # 1.5B-3B: ~1-3GB VRAM, çok hızlı, temel tasklar için yeterli
+    # 7B: ~7-8GB VRAM, mükemmel denge, çoğu task için ideal ⭐
+    # 14B: ~14-16GB VRAM, çok iyi kalite, Colab T4'te sınırda
+    # 32B+: ~32GB+ VRAM, en iyi kalite, quantization gerekir
+    
     device: "auto" # "auto" (GPU varsa kullan), "cuda" (GPU zorla), "cpu" (CPU zorla)
     trust_remote_code: true
     params:
-      max_tokens: 256
-      temperature: 0.7
+      max_tokens: 1024 # Yeterli token limiti (tool calls için önemli)
+      temperature: 0.1 # Düşük = daha yapılandırılmış, tutarlı cevaplar
 
   openai:
     model: "gpt-4.1-mini-2025-04-14"
@@ -77,29 +92,32 @@ llm:
   vllm:
     auto_start_server: true
     persistent_server: false # Keep the vLLM server alive between runs to avoid cold starts
-    health_check_path: "/models"
-    startup_timeout: 600 # Increased for Colab (was 420)
+    health_check_path: "/health"
+    startup_timeout: 600 # Increased for Colab (model download + loading)
     params:
-      max_tokens: 256 # Reduced to fit in 2048 token context (1.5B model)
-      temperature: 0.7
+      max_tokens: 512 # Yeterli token limiti
+      temperature: 0.1 # Düşük = daha kararlı cevaplar
     models:
-      - checkpoint: "Qwen/Qwen2.5-1.5B-Instruct"
+      - checkpoint: "Qwen/Qwen2.5-3B-Instruct" # Tool calling destekler
         host: "127.0.0.1"
         port: 8020
         tensor_parallel_size: 1
-        gpu_memory_utilization: 0.70
-        max_model_len: 2048
+        gpu_memory_utilization: 0.50 # Colab T4 için güvenli (%50)
+        max_model_len: 4096 # Yeterli context
         trust_remote_code: true
-        tool_call_parser: "hermes"
+        tool_call_parser: "hermes" # Tool calling için gerekli
         additional_args:
-          - "--enforce-eager" # Disable torch.compile to avoid Triton compilation errors
+          - "--enforce-eager" # Colab için gerekli
           - "--disable-frontend-multiprocessing"
+          - "--enable-auto-tool-choice" # Tool calling'i aktifleştirir
 notes:
-  - "HUGGING FACE KULLANIMI: Provider 'huggingface' olarak ayarlanmış - API key gerektirmez!"
-  - "İlk çalıştırmada model indirilir (~1-7GB), sonraki çalıştırmalar cache kullanır"
+  - "✅ TOOL CALLING ÇALIŞIYOR: HuggingFace provider artık JSON parsing ile tool calling destekliyor!"
+  - "Provider 'huggingface' olarak ayarlanmış - API key gerektirmez, tamamen ücretsiz!"
+  - "İlk çalıştırmada model indirilir (~3GB Qwen 3B için), sonraki çalıştırmalar cache kullanır"
   - "GPU varsa otomatik kullanılır, yoksa CPU kullanılır (daha yavaş)"
-  - "Model değiştirmek için: llm.huggingface.model alanını düzenleyin"
-  - "Diğer provider'ları kullanmak için: llm.provider değerini değiştirin (openai, anthropic, gemini, vllm)"
+  - "Model'in düşük temperature (0.1) ile structured output vermesi sağlanıyor"
+  - "Qwen modelleri tool calling için özellikle iyi çalışır"
+  - "Alternatif: vLLM (daha hızlı ama kurulumu karmaşık), OpenAI/Anthropic (ücretli ama en iyi)"
   - "MeetingScheduling baseline configuration (no attacks)"
   - "MeetingScheduling always logs scores for each iteration"
   - "MeetingScheduling environment coordinates attendance intervals across agents"
