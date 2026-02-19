@@ -441,8 +441,21 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
             raise ValueError("agent_name must be provided when using vLLM provider")
         client, _ = vllm_runtime.create_client(agent_name)
         return client
+    elif provider == "huggingface":
+        from llm_server.clients.huggingface_client import HuggingFaceClient
+        
+        hf_cfg = llm_config.get("huggingface") or {}
+        model_name = hf_cfg.get("model", "Qwen/Qwen2.5-1.5B-Instruct")
+        device = hf_cfg.get("device", "auto")
+        trust_remote_code = hf_cfg.get("trust_remote_code", True)
+        
+        return HuggingFaceClient(
+            model_name=model_name,
+            device=device,
+            trust_remote_code=trust_remote_code
+        )
     else:
-        raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, together, vllm")
+        raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, together, vllm, huggingface")
 
 
 def _get_environment_registry():
@@ -520,6 +533,8 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
         model_name = llm_config.get("together", {}).get("model", "unknown-together-model")
     elif provider == "vllm":
         model_name = _get_vllm_model_name(llm_config)
+    elif provider == "huggingface":
+        model_name = llm_config.get("huggingface", {}).get("model", "Qwen/Qwen2.5-1.5B-Instruct")
     else:
         raise ValueError(f"Unknown provider: {provider}")
 

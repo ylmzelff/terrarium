@@ -31,8 +31,25 @@ communication_network:
   # consolidate_channels=true => one blackboard per clique (plus leftover edges)
   consolidate_channels: true
 llm:
-  # Provider: "openai", "anthropic", "gemini", "together", "vllm", or "mock"
-  provider: "vllm" # Using Qwen2.5-3B-Instruct on Colab
+  # Provider: "openai", "anthropic", "gemini", "together", "vllm", "huggingface", or "mock"
+  # RECOMMENDED: "huggingface" - Ücretsiz, API key gerektirmez!
+  provider: "huggingface"
+
+  # Hugging Face - ÜCRETSİZ, API KEY GEREKTİRMEZ! 🎉
+  # Modeller otomatik olarak Hugging Face Hub'dan indirilir
+  # İlk çalıştırma yavaş (model indirme), sonraki çalıştırmalar hızlı (cache)
+  huggingface:
+    # Önerilen modeller:
+    # Küçük (hızlı): "Qwen/Qwen2.5-1.5B-Instruct", "google/gemma-2b-it", "microsoft/phi-2"
+    # Orta (dengeli): "Qwen/Qwen2.5-3B-Instruct", "meta-llama/Llama-3.2-3B-Instruct"
+    # Büyük (kaliteli): "Qwen/Qwen2.5-7B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3"
+    model: "Qwen/Qwen2.5-3B-Instruct"
+    device: "auto" # "auto" (GPU varsa kullan), "cuda" (GPU zorla), "cpu" (CPU zorla)
+    trust_remote_code: true
+    params:
+      max_tokens: 256
+      temperature: 0.7
+
   openai:
     model: "gpt-4.1-mini-2025-04-14"
     params:
@@ -78,12 +95,17 @@ llm:
           - "--enforce-eager" # Disable torch.compile to avoid Triton compilation errors
           - "--disable-frontend-multiprocessing"
 notes:
-  - MeetingScheduling baseline configuration (no attacks)
-  - MeetingScheduling always logs scores for each iteration
-  - MeetingScheduling environment coordinates attendance intervals across agents
-  - Agents coordinate via blackboards during planning phase
-  - Final attendance decisions happen during execution using attend_meeting action
-  - Meetings have fixed windows on a shared timeline; soft meetings reward overlap
-  - Strict meetings reward full‑window attendance; overlaps across two meetings are penalized
-  - Objective: Maximize global reward ratio from CoLLAB v2 scoring
-  - Simulation stops when all attendance variables are assigned or max iterations reached
+  - "HUGGING FACE KULLANIMI: Provider 'huggingface' olarak ayarlanmış - API key gerektirmez!"
+  - "İlk çalıştırmada model indirilir (~1-7GB), sonraki çalıştırmalar cache kullanır"
+  - "GPU varsa otomatik kullanılır, yoksa CPU kullanılır (daha yavaş)"
+  - "Model değiştirmek için: llm.huggingface.model alanını düzenleyin"
+  - "Diğer provider'ları kullanmak için: llm.provider değerini değiştirin (openai, anthropic, gemini, vllm)"
+  - "MeetingScheduling baseline configuration (no attacks)"
+  - "MeetingScheduling always logs scores for each iteration"
+  - "MeetingScheduling environment coordinates attendance intervals across agents"
+  - "Agents coordinate via blackboards during planning phase"
+  - "Final attendance decisions happen during execution using attend_meeting action"
+  - "Meetings have fixed windows on a shared timeline; soft meetings reward overlap"
+  - "Strict meetings reward full‑window attendance; overlaps across two meetings are penalized"
+  - "Objective: Maximize global reward ratio from CoLLAB v2 scoring"
+  - "Simulation stops when all attendance variables are assigned or max iterations reached"
