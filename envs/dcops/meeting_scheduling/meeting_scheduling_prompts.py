@@ -6,8 +6,7 @@ from src.tool_prompt_utils import build_vllm_tool_instructions, get_phase_tool_i
 
 # sana verilen 1 dimensional arraylardan ortak intersection bul(1 olan slotlar için) ve executiondan sonra karar verilen index i döndür.
 class MeetingSchedulingPrompts:
-    """
-    Prompt builder for the CoLLAB v2 MeetingScheduling environment.
+    """Prompt builder for the MeetingScheduling environment.
 
     Agents decide attendance intervals for each meeting they participate in.
     """

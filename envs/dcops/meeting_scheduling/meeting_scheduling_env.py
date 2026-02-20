@@ -1,8 +1,7 @@
-"""
-MeetingScheduling Environment - Simplified Version
+"""MeetingScheduling Environment
 
-Simple meeting scheduling without CoLLAB dependency.
-Agents coordinate to schedule meetings at earliest common available slots.
+Agents coordinate to schedule meetings at earliest common available slots
+using privacy-preserving Oblivious Transfer (OT) protocol.
 """
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
@@ -25,7 +24,7 @@ from src.utils import (
 from .meeting_scheduling_prompts import MeetingSchedulingPrompts
 
 class SimpleMeeting:
-    """Simple meeting object without CoLLAB dependency."""
+    """Simple meeting object."""
     def __init__(self, meeting_id: str, title: str, participants: List[str]):
         self.meeting_id = meeting_id
         self.title = title
@@ -33,12 +32,11 @@ class SimpleMeeting:
 
 
 class SimpleProblemDefinition:
-    """Minimal problem definition for meeting scheduling."""
+    """Problem definition for meeting scheduling."""
     def __init__(self, agents: List[str], meetings: List[SimpleMeeting]):
         self.agents = {name: name for name in agents}
         self.variables = []
         self._agent_vars = {agent: [] for agent in agents}
-        self.factors = []  # No factors in simplified version
         self.description = (
             f"Meeting scheduling task with {len(agents)} agents and {len(meetings)} meeting(s). "
             "Coordinate to schedule meetings at earliest common available slots."
@@ -94,7 +92,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Clear seed directories FIRST to ensure clean state for this run
         clear_seed_directories(self.__class__.__name__, self.current_seed, self.full_config)
 
-        # ---- Simple meeting generation (no CoLLAB dependency) -------------------------
+        # Generate agent names
         network_cfg = config.get("communication_network") or {}
         assert network_cfg is not None and network_cfg != {}, "communication_network config must be specified"
         num_agents = network_cfg.get("num_agents")
@@ -117,15 +115,13 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         # Create simple problem definition
         class SimpleInstance:
-            def __init__(self, meetings, timeline_length):
+            def __init__(self, meetings):
                 self.meetings = meetings
-                self.timeline_length = timeline_length
-                self.explanations = {}  # No agent-specific explanations
         
-        self.instance = SimpleInstance(self.meetings, self.env_config.get("timeline_length", 12))
+        self.instance = SimpleInstance(self.meetings)
         self.problem = SimpleProblemDefinition(self.agent_names, self.meetings)
 
-        # Score tracking (simplified - no CoLLAB rewards)
+        # Score tracking
         self.joint_reward_history: List[float] = []
         self.max_joint_reward = float(num_meetings)  # 1.0 point per meeting scheduled
         self.agents: List["BaseAgent"] = []
@@ -185,7 +181,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "joint_assignment": self.assignment.copy(),
             "agent_variables": agent_vars,
             "agent_choices": agent_choices,
-            "timeline_length": self.instance.timeline_length,
             "total_variables": len(self.problem.variables),
             "variables_assigned": len(self.assignment),
             "variables_remaining": len(self.problem.variables) - len(self.assignment),
@@ -221,7 +216,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return False
     
     def compute_max_joint_reward(self) -> float:
-        """Return the optimal joint reward (simplified - no CoLLAB scoring)."""
+        """Return the optimal joint reward (1.0 per agent per successful meeting)."""
         # Maximum reward = all agents successfully scheduled all meetings at earliest common slot
         return float(len(self.agent_names) * len(self.meetings))
 
@@ -693,7 +688,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "meetings": meetings,
             "attendance": self.assignment.copy(),
             "agent_names": self.agent_names.copy(),
-            "timeline_length": self.instance.timeline_length,
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:

@@ -2,8 +2,7 @@ from typing import Dict, List, Any, Optional, Set
 
 
 class MeetingSchedulingTools:
-    """
-    CoLLAB v2 MeetingScheduling tools.
+    """MeetingScheduling environment tools.
 
     The execution action is `attend_meeting`, which sets an agent's attendance
     interval for a specific meeting they participate in.

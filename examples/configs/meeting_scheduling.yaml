@@ -8,7 +8,6 @@ simulation:
   note: "im a note"
 environment:
   name: MeetingSchedulingEnvironment
-  # Simple meeting scheduling (no CoLLAB dependency)
 
   # ========== INTERSECTION CONTROL ==========
   # intersections: Number of GUARANTEED common slots where ALL agents are available
@@ -17,14 +16,10 @@ environment:
   intersections: 3 # GUARANTEED: Exactly 3 common available slots for all participants
 
   num_meetings: 1 # Number of meetings to schedule
-  timeline_length: 12 # Not used anymore (kept for compatibility)
-  min_participants: 2 # Not used anymore
-  max_participants: 4 # Not used anymore
-  # Not used anymore
 
   # ========== AVAILABILITY TABLE CONFIGURATION ==========
   num_days: 1 # Number of days to show in availability table
-  slots_per_day: 6 # Number of time slots per day (reduced to fit 2048 token limit)
+  slots_per_day: 6 # Number of time slots per day
   availability_rate: 0.4 # Probability that each agent is available for NON-INTERSECTION slots (40% default)
 communication_network:
   # Topology used to create blackboards
@@ -117,21 +112,17 @@ llm:
           - "--disable-frontend-multiprocessing"
           - "--enable-auto-tool-choice" # Tool calling'i aktifleştirir
 notes:
-  - "✅ TOOL CALLING + VRAM OPTİMİZE: HuggingFace provider tool calling destekliyor + model paylaşımı aktif!"
-  - "🔧 OOM FIX: Tüm agentlar aynı model instance'ını paylaşıyor (VRAM tasarrufu)"
-  - "Provider 'huggingface' olarak ayarlanmış - API key gerektirmez, tamamen ücretsiz!"
-  - "İlk çalıştırmada model indirilir (~7GB Qwen 7B için), sonraki çalıştırmalar cache kullanır"
-  - "GPU varsa otomatik kullanılır, yoksa CPU kullanılır (daha yavaş)"
-  - "Model'in düşük temperature (0.1) ile structured output vermesi sağlanıyor"
-  - "Qwen 7B modeli tool calling için mükemmel, 2+ agent ile çalışır"
-  - "OOM problemi yaşarsanız: model: 'Qwen/Qwen2.5-3B-Instruct' veya 1.5B kullanın"
-  - "Alternatif: vLLM (daha hızlı ama kurulumu karmaşık), OpenAI/Anthropic (ücretli ama en iyi)"
-  - "MeetingScheduling baseline configuration (no attacks)"
-  - "MeetingScheduling always logs scores for each iteration"
-  - "MeetingScheduling environment coordinates attendance intervals across agents"
-  - "Agents coordinate via blackboards during planning phase"
-  - "Final attendance decisions happen during execution using attend_meeting action"
-  - "Meetings have fixed windows on a shared timeline; soft meetings reward overlap"
-  - "Strict meetings reward full‑window attendance; overlaps across two meetings are penalized"
-  - "Objective: Maximize global reward ratio from CoLLAB v2 scoring"
-  - "Simulation stops when all attendance variables are assigned or max iterations reached"
+  - "✅ TOOL CALLING + VRAM OPTIMIZE: HuggingFace provider tool calling supports + model sharing active!"
+  - "🔧 OOM FIX: All agents share the same model instance (VRAM savings)"
+  - "Provider set to 'huggingface' - No API key required, completely free!"
+  - "First run downloads model (~7GB for Qwen 7B), subsequent runs use cache"
+  - "GPU automatically used if available, falls back to CPU (slower)"
+  - "Model configured with low temperature (0.1) for structured output"
+  - "Qwen 7B model excellent for tool calling, works with 2+ agents"
+  - "If OOM occurs: use model: 'Qwen/Qwen2.5-3B-Instruct' or 1.5B"
+  - "Alternatives: vLLM (faster but complex setup), OpenAI/Anthropic (paid but best)"
+  - "MeetingScheduling baseline configuration"
+  - "Agents coordinate via blackboards using privacy-preserving OT protocol"
+  - "Environment tracks scores for each iteration"
+  - "Objective: Schedule meetings at earliest common available slots"
+  - "Simulation stops when all meetings scheduled or max iterations reached"
