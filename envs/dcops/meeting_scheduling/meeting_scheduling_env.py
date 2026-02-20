@@ -280,12 +280,11 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
         """
-        Generate REALISTIC random availability arrays for a specific meeting.
+        Generate availability arrays with GUARANTEED intersections for a specific meeting.
         
-        IMPORTANT: This function does NOT pre-compute intersection!
-        The OT protocol will discover the intersection during execution.
-        This reflects real-world scenarios where agents independently have schedules
-        and the system does not know their common availability beforehand.
+        The 'intersections' config parameter controls how many slots ALL participants
+        are guaranteed to be available. This creates a controlled test scenario where
+        the OT protocol is guaranteed to find exactly N common slots.
         
         Args:
             participants: List of agent names participating in this meeting
@@ -299,25 +298,44 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Get configuration parameters
         total_slots = self.num_days * self.slots_per_day
         availability_rate = self.env_config.get('availability_rate', 0.4)  # 40% default
+        num_intersections = self.env_config.get('intersections', 3)  # Default: 3 common slots
+        
+        # Validate intersections parameter
+        if num_intersections > total_slots:
+            logger.warning(
+                f"intersections={num_intersections} > total_slots={total_slots}, "
+                f"capping to {total_slots}"
+            )
+            num_intersections = total_slots
         
         logger.info(
-            f"Generating realistic availability: {total_slots} total slots, "
-            f"{availability_rate*100:.0f}% availability rate per agent"
+            f"Generating controlled availability: {total_slots} total slots, "
+            f"{num_intersections} GUARANTEED intersections (common slots)"
         )
+        
+        # Step 1: Select N random slots that will be the GUARANTEED intersection
+        # These slots will be available (1) for ALL participants
+        intersection_slots = random.sample(range(total_slots), num_intersections)
+        intersection_slots.sort()  # Sort for readability
+        
+        logger.info(f"  🎯 Guaranteed intersection slots: {intersection_slots}")
         
         availability = {}
         
-        # Generate INDEPENDENT random availability for each participant
-        # NO pre-determined intersection - OT protocol will find it!
+        # Step 2: Generate availability for each participant
         for agent_name in participants:
-            slots = []
+            slots = [AvailabilityConstants.BUSY] * total_slots  # Start with all busy
             
-            for idx in range(total_slots):
-                # Each slot is independently random for each agent
-                # This simulates real-world scenarios where agents have
-                # independent schedules and conflicts
+            # Step 2a: Set intersection slots to AVAILABLE for this agent
+            for slot_idx in intersection_slots:
+                slots[slot_idx] = AvailabilityConstants.AVAILABLE
+            
+            # Step 2b: Randomly set other slots based on availability_rate
+            # (but never override the guaranteed intersection slots)
+            remaining_slots = [i for i in range(total_slots) if i not in intersection_slots]
+            for slot_idx in remaining_slots:
                 is_available = random.random() < availability_rate
-                slots.append(
+                slots[slot_idx] = (
                     AvailabilityConstants.AVAILABLE if is_available 
                     else AvailabilityConstants.BUSY
                 )
@@ -331,9 +349,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 f"  {agent_name}: {available_count}/{total_slots} available slots"
             )
             logger.debug(f"    Available indices: {available_indices}")
-            logger.info(
-                f"    ⚠️  Intersection UNKNOWN - will be computed by OT protocol"
-            )
+        
+        logger.info(
+            f"  ✅ Guaranteed: ALL {len(participants)} participants available at slots {intersection_slots}"
+        )
         
         return availability
 

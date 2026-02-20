@@ -16,11 +16,16 @@ from llm_server.clients.abstract_client import AbstractClient
 logger = logging.getLogger(__name__)
 
 
+# Global model cache for sharing models across multiple clients (saves VRAM!)
+_MODEL_CACHE = {}
+
+
 class HuggingFaceClient(AbstractClient):
     """
     Client that loads and runs Hugging Face models locally using transformers library.
     
     No API keys required - models run directly on your hardware.
+    Models are shared across all clients with the same model_name to save VRAM.
     """
 
     def __init__(
@@ -44,23 +49,29 @@ class HuggingFaceClient(AbstractClient):
         self.trust_remote_code = trust_remote_code
         self.max_memory = max_memory
         
-        # Lazy loading - only load when needed
-        self._model = None
-        self._tokenizer = None
+        # Use shared pipeline from cache (saves VRAM!)
         self._pipeline = None
         
-        logger.info(f"Initialized HuggingFaceClient with model: {model_name}")
+        logger.info(f"Initialized HuggingFaceClient with model: {model_name} (shared across agents)")
 
     def _ensure_model_loaded(self):
-        """Lazy load the model and tokenizer."""
+        """Lazy load the model and tokenizer. Uses global cache to share models across agents."""
+        # Check if already loaded from cache
         if self._pipeline is not None:
+            return
+        
+        # Check global cache first (VRAM saver!)
+        cache_key = f"{self.model_name}_{self.device}"
+        if cache_key in _MODEL_CACHE:
+            self._pipeline = _MODEL_CACHE[cache_key]
+            logger.info(f"✅ Reusing cached model {self.model_name} (saves VRAM!)")
             return
         
         try:
             from transformers import pipeline
             import torch
             
-            logger.info(f"Loading Hugging Face model: {self.model_name}")
+            logger.info(f"Loading Hugging Face model: {self.model_name} (first time, will be cached)")
             
             # Check if CUDA is available
             device_map = self.device
@@ -68,16 +79,29 @@ class HuggingFaceClient(AbstractClient):
                 device_map = "cpu"
                 logger.warning("CUDA not available, using CPU. This will be slower.")
             
-            # Create text generation pipeline
-            self._pipeline = pipeline(
-                "text-generation",
-                model=self.model_name,
-                device_map=device_map,
-                trust_remote_code=self.trust_remote_code,
-                max_memory=self.max_memory,
-            )
+            # Create text generation pipeline with memory optimization
+            pipeline_kwargs = {
+                "model": self.model_name,
+                "device_map": device_map,
+                "trust_remote_code": self.trust_remote_code,
+                "max_memory": self.max_memory,
+            }
             
-            logger.info(f"Model {self.model_name} loaded successfully on {device_map}")
+            # Use FP16 on GPU for VRAM efficiency (2x memory save!)
+            if torch.cuda.is_available():
+                import transformers
+                pipeline_kwargs["model_kwargs"] = {
+                    "torch_dtype": torch.float16,
+                    "low_cpu_mem_usage": True,
+                }
+            
+            self._pipeline = pipeline("text-generation", **pipeline_kwargs)
+            
+            # Cache the pipeline for other agents to reuse
+            _MODEL_CACHE[cache_key] = self._pipeline
+            
+            logger.info(f"✅ Model {self.model_name} loaded and cached successfully on {device_map}")
+            logger.info(f"💾 All agents will share this model instance (VRAM efficient)")
             
         except ImportError as e:
             raise ImportError(

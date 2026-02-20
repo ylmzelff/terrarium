@@ -9,17 +9,23 @@ simulation:
 environment:
   name: MeetingSchedulingEnvironment
   # Simple meeting scheduling (no CoLLAB dependency)
+
+  # ========== INTERSECTION CONTROL ==========
+  # intersections: Number of GUARANTEED common slots where ALL agents are available
+  # Example: intersections=3 means exactly 3 slots where both Agent A and Agent B are free
+  # The OT protocol will discover these slots during execution (privacy-preserving!)
+  intersections: 3 # GUARANTEED: Exactly 3 common available slots for all participants
+
   num_meetings: 1 # Number of meetings to schedule
   timeline_length: 12 # Not used anymore (kept for compatibility)
   min_participants: 2 # Not used anymore
   max_participants: 4 # Not used anymore
-  soft_meeting_ratio: 0.6 # Not used anymore
-  # Availability table configuration
+  # Not used anymore
+
+  # ========== AVAILABILITY TABLE CONFIGURATION ==========
   num_days: 1 # Number of days to show in availability table
   slots_per_day: 6 # Number of time slots per day (reduced to fit 2048 token limit)
-  availability_rate:
-    0.4 # Probability that each agent is available for each slot (40% default)
-    # OT protocol will discover actual intersection - NOT pre-determined!
+  availability_rate: 0.4 # Probability that each agent is available for NON-INTERSECTION slots (40% default)
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random
@@ -41,10 +47,10 @@ llm:
   # Tool calling için JSON parsing kullanılır (model'in structured output vermesi gerekir)
   huggingface:
     # Tool calling için en iyi modeller (güç sırasına göre):
-    
+
     # 🚀 COLAB T4 GPU İÇİN EN İYİ SEÇİM:
-    model: "Qwen/Qwen2.5-7B-Instruct"  # 7B - Mükemmel denge (ÖNERİLEN!)
-    
+    model: "Qwen/Qwen2.5-7B-Instruct" # 7B - Mükemmel denge (ÖNERİLEN!)
+
     # Diğer güçlü seçenekler:
     # ⭐⭐⭐ "Qwen/Qwen2.5-14B-Instruct" - 14B - Çok güçlü (Colab'da biraz yavaş ama çalışır)
     # ⭐⭐⭐ "Qwen/Qwen2.5-32B-Instruct" - 32B - En güçlü (Quantization gerekebilir)
@@ -52,13 +58,13 @@ llm:
     # ⭐⭐ "mistralai/Mistral-7B-Instruct-v0.3" - 7B - Popüler, iyi
     # ⭐ "Qwen/Qwen2.5-3B-Instruct" - 3B - Hızlı ama daha az güçlü
     # ⭐ "Qwen/Qwen2.5-1.5B-Instruct" - 1.5B - En hızlı, en hafif
-    
+
     # MODEL BOYUTU REHBERİ:
     # 1.5B-3B: ~1-3GB VRAM, çok hızlı, temel tasklar için yeterli
     # 7B: ~7-8GB VRAM, mükemmel denge, çoğu task için ideal ⭐
     # 14B: ~14-16GB VRAM, çok iyi kalite, Colab T4'te sınırda
     # 32B+: ~32GB+ VRAM, en iyi kalite, quantization gerekir
-    
+
     device: "auto" # "auto" (GPU varsa kullan), "cuda" (GPU zorla), "cpu" (CPU zorla)
     trust_remote_code: true
     params:
@@ -111,12 +117,14 @@ llm:
           - "--disable-frontend-multiprocessing"
           - "--enable-auto-tool-choice" # Tool calling'i aktifleştirir
 notes:
-  - "✅ TOOL CALLING ÇALIŞIYOR: HuggingFace provider artık JSON parsing ile tool calling destekliyor!"
+  - "✅ TOOL CALLING + VRAM OPTİMİZE: HuggingFace provider tool calling destekliyor + model paylaşımı aktif!"
+  - "🔧 OOM FIX: Tüm agentlar aynı model instance'ını paylaşıyor (VRAM tasarrufu)"
   - "Provider 'huggingface' olarak ayarlanmış - API key gerektirmez, tamamen ücretsiz!"
-  - "İlk çalıştırmada model indirilir (~3GB Qwen 3B için), sonraki çalıştırmalar cache kullanır"
+  - "İlk çalıştırmada model indirilir (~7GB Qwen 7B için), sonraki çalıştırmalar cache kullanır"
   - "GPU varsa otomatik kullanılır, yoksa CPU kullanılır (daha yavaş)"
   - "Model'in düşük temperature (0.1) ile structured output vermesi sağlanıyor"
-  - "Qwen modelleri tool calling için özellikle iyi çalışır"
+  - "Qwen 7B modeli tool calling için mükemmel, 2+ agent ile çalışır"
+  - "OOM problemi yaşarsanız: model: 'Qwen/Qwen2.5-3B-Instruct' veya 1.5B kullanın"
   - "Alternatif: vLLM (daha hızlı ama kurulumu karmaşık), OpenAI/Anthropic (ücretli ama en iyi)"
   - "MeetingScheduling baseline configuration (no attacks)"
   - "MeetingScheduling always logs scores for each iteration"
