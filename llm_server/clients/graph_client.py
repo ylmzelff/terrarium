@@ -99,32 +99,6 @@ def rate_limit(calls_per_second: float = 2.0):
 
 
 class GraphAPIClient:
-    def get_events(self, email: str, start_datetime: datetime, end_datetime: datetime, timezone: Optional[str] = None) -> list:
-        """
-        Belirtilen kullanıcı için Outlook/Teams takviminden etkinlikleri çeker.
-        Args:
-            email: Kullanıcı e-posta adresi
-            start_datetime: Başlangıç zamanı (datetime)
-            end_datetime: Bitiş zamanı (datetime)
-            timezone: Zaman dilimi (opsiyonel)
-        Returns:
-            Etkinlik listesi (her biri bir dict)
-        """
-        self._ensure_valid_token()
-        tz = timezone or self.timezone
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "Prefer": f'outlook.timezone="{tz}"'
-        }
-        params = {
-            "startDateTime": start_datetime.isoformat(),
-            "endDateTime": end_datetime.isoformat()
-        }
-        url = f"{self.GRAPH_API_BASE}/users/{email}/calendarView"
-        response = requests.get(url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json().get("value", [])
     """
     Microsoft Graph API client for calendar and meeting operations.
     
@@ -626,7 +600,137 @@ class GraphAPIClient:
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Failed to create meeting: {e}")
             raise Exception(f"Failed to create Teams meeting: {e}")
-    
+
+    @rate_limit(calls_per_second=2.0)
+    def fetch_raw_calendar(
+        self,
+        email: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch raw calendar data from Microsoft Graph API — exactly like test_graph_api.py.
+
+        Does NOT parse or compute slots. Returns the raw user info + raw events
+        so the LLM can decide what is free/busy.
+
+        Steps (mirrors test_graph_api.py):
+          1. GET /me → validate user identity
+          2. GET /me/calendarView → fetch all events in the date range
+
+        Args:
+            email: User email for token lookup
+            start_datetime: Start of query window
+            end_datetime: End of query window
+            timezone: Timezone (default: instance timezone)
+
+        Returns:
+            {
+                "user": {"displayName": "...", "mail": "..."},
+                "events": [
+                    {
+                        "subject": "Team Standup",
+                        "start": "2026-02-23T09:00:00",
+                        "end":   "2026-02-23T10:00:00",
+                        "showAs": "busy",
+                        "isOnlineMeeting": true
+                    },
+                    ...
+                ],
+                "query": {"start": "...", "end": "...", "timezone": "..."}
+            }
+
+        Raises:
+            RuntimeError: If /me fails or calendarView fails
+        """
+        import requests  # lazy import
+
+        token = self._ensure_valid_token(email)
+        tz = timezone or self.timezone
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Prefer": f'outlook.timezone="{tz}"',
+        }
+
+        # ── STEP 1: /me — validate user identity ──────────────────────
+        logger.info("🔑 [%s] Validating user identity via /me ...", email)
+        me_resp = requests.get(
+            f"{self.GRAPH_API_BASE}/me",
+            headers=headers,
+            timeout=30,
+        )
+        if me_resp.status_code != 200:
+            raise RuntimeError(
+                f"❌ /me endpoint failed (status {me_resp.status_code}). "
+                f"Token may be invalid or expired.\n"
+                f"Response: {me_resp.text[:500]}"
+            )
+        me_data = me_resp.json()
+        display_name = me_data.get("displayName", "?")
+        user_mail = me_data.get("mail") or me_data.get("userPrincipalName", "?")
+        logger.info("✅ User: %s (%s)", display_name, user_mail)
+
+        # ── STEP 2: /me/calendarView — raw events ─────────────────────
+        logger.info(
+            "📅 [%s] Fetching calendarView: %s → %s (tz=%s)",
+            email, start_datetime.isoformat(), end_datetime.isoformat(), tz,
+        )
+        params = {
+            "startDateTime": start_datetime.isoformat(),
+            "endDateTime": end_datetime.isoformat(),
+            "$select": "subject,start,end,showAs,isOnlineMeeting",
+            "$orderby": "start/dateTime",
+            "$top": 200,
+        }
+        cal_resp = requests.get(
+            f"{self.GRAPH_API_BASE}/me/calendarView",
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+        if cal_resp.status_code != 200:
+            raise RuntimeError(
+                f"❌ calendarView failed (status {cal_resp.status_code}).\n"
+                f"Response: {cal_resp.text[:500]}"
+            )
+
+        raw_events = cal_resp.json().get("value", [])
+
+        # Flatten to simple dicts for the LLM
+        events = []
+        for ev in raw_events:
+            events.append({
+                "subject":          ev.get("subject", "(no title)"),
+                "start":            ev.get("start", {}).get("dateTime", ""),
+                "end":              ev.get("end", {}).get("dateTime", ""),
+                "showAs":           ev.get("showAs", "unknown"),
+                "isOnlineMeeting":  ev.get("isOnlineMeeting", False),
+            })
+
+        logger.info("📋 [%s] %d raw events fetched", email, len(events))
+        for i, e in enumerate(events, 1):
+            logger.info(
+                "   [%02d] '%s' | %s → %s | %s | Teams=%s",
+                i, e["subject"], e["start"][:16], e["end"][:16],
+                e["showAs"], e["isOnlineMeeting"],
+            )
+
+        return {
+            "user": {
+                "displayName": display_name,
+                "mail": user_mail,
+            },
+            "events": events,
+            "query": {
+                "start": start_datetime.isoformat(),
+                "end": end_datetime.isoformat(),
+                "timezone": tz,
+            },
+        }
+
     def get_events(self, email: str, start_datetime: datetime, end_datetime: datetime, timezone: Optional[str] = None) -> list:
         token = self._ensure_valid_token(email)
         tz = timezone or self.timezone
@@ -692,54 +796,39 @@ class GraphAPIClient:
         """
         Create client from a loaded YAML config dictionary.
 
-        Reads the ``graph_api`` block from the full simulation config.
-        Missing values fall back to the corresponding environment variables so
-        that this method is a *superset* of ``from_env()``; you can gradually
-        migrate credentials from env vars to the YAML file.
+        Reads the ``graph_api`` block from the config.  All credentials
+        (client_id, tenant_id, etc.) are read **exclusively** from the YAML
+        config — no environment variable fallbacks.
+
+        Supports multiple call patterns:
+          1. Full YAML config: {"simulation": ..., "environment": {"graph_api": ...}, ...}
+          2. env_state dict:   {"graph_api": {...}, "num_days": 5, ...}
+          3. Flat config:      {"graph_api": {...}}
 
         Args:
-            yaml_config: The full parsed YAML config dict (i.e., the dict
-                         returned by ``yaml.safe_load(open("meeting_scheduling.yaml"))``).
+            yaml_config: The parsed config dict.
             fresh_auth:  Override the ``fresh_auth`` flag in the YAML block.
-                         If None, the YAML value (default: True) is used.
 
         Returns:
             Initialized GraphAPIClient.
 
         Raises:
-            ValueError: If ``client_id`` is missing in both YAML and env vars.
-
-        Example::
-
-            import yaml
-            from llm_server.clients.graph_client import GraphAPIClient
-
-            with open("examples/configs/meeting_scheduling.yaml") as f:
-                cfg = yaml.safe_load(f)
-
-            client = GraphAPIClient.from_yaml(cfg)
+            ValueError: If ``client_id`` is missing in the YAML config.
         """
-        # Support multiple call patterns:
-        #   1. full YAML config: {"simulation": ..., "environment": {"graph_api": ...}, ...}
-        #   2. env_state dict:   {"graph_api": {...}, "num_days": 5, ...}
-        #   3. flat config:      {"graph_api": {...}}
+        # Support multiple call patterns
         graph_cfg: dict = (
             yaml_config.get("graph_api")                                   # flat / env_state
             or yaml_config.get("environment", {}).get("graph_api")         # nested full config
             or {}
         )
 
-
-        # --- credentials: YAML first, env-var fallback ---
-        client_id = graph_cfg.get("client_id") or os.getenv("AZURE_CLIENT_ID")
-        client_secret = graph_cfg.get("client_secret") or os.getenv("AZURE_CLIENT_SECRET")
-        tenant_id = (
-            graph_cfg.get("tenant_id")
-            or os.getenv("AZURE_TENANT_ID", "common")
-        )
+        # --- credentials: YAML ONLY (no env-var fallback) ---
+        client_id     = graph_cfg.get("client_id")
+        client_secret = graph_cfg.get("client_secret")
+        tenant_id     = graph_cfg.get("tenant_id", "common")
 
         # --- optional settings with sensible defaults ---
-        timezone = graph_cfg.get("timezone", "UTC")
+        timezone         = graph_cfg.get("timezone", "UTC")
         token_cache_path = graph_cfg.get("token_cache_path", "token_cache.bin")
         yaml_fresh_auth: bool = graph_cfg.get("fresh_auth", True)
         # Caller-supplied override takes precedence over the YAML value
@@ -748,8 +837,7 @@ class GraphAPIClient:
         # --- validation ---
         if not client_id:
             raise ValueError(
-                "graph_api.client_id is missing in the YAML config and the "
-                "AZURE_CLIENT_ID environment variable is not set. "
+                "graph_api.client_id is missing in the YAML config. "
                 "Add it under environment.graph_api.client_id in your YAML file."
             )
 
@@ -783,14 +871,16 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
     # Test if dependencies are installed
-    if not GRAPH_AVAILABLE:
+    try:
+        import msal, requests, pytz  # noqa: F401
+    except ImportError:
         print("❌ Missing dependencies. Install with:")
         print("   pip install msal requests pytz")
         exit(1)
     
     print("✅ Graph API client module loaded successfully")
     print("\nTo use this client:")
-    print("1. Set environment variables: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID")
-    print("2. Create client: client = GraphAPIClient.from_env()")
-    print("3. Authenticate: client.authenticate('user@example.com', 'password')")
+    print("1. Set graph_api.client_id and graph_api.tenant_id in your YAML config")
+    print("2. Create client: client = GraphAPIClient.from_yaml(config)")
+    print("3. Authenticate via device code flow")
     print("4. Get availability or create meetings")

@@ -50,14 +50,18 @@ PHASES:
 You must complete ALL 5 steps in order:
 
   STEP 1 → Call fetch_my_calendar(meeting_id)
-           This returns your calendar events and slot configuration.
+           This fetches your RAW calendar events from Microsoft Teams/Outlook.
+           You will receive a list of events with: subject, start, end, showAs, isOnlineMeeting.
 
-  STEP 2 → Read the returned events carefully.
-           For each slot: if status='free' AND hour is 09:00-18:00 → mark as 1 (available)
-                         otherwise → mark as 0 (busy)
+  STEP 2 → Read the raw events carefully. YOU must determine your availability:
+           - Each slot = 1 hour (slot 0 = 00:00–01:00, slot 9 = 09:00–10:00, etc.)
+           - Work hours are 09:00–18:00 → slots outside this range = 0 (unavailable)
+           - For each work-hour slot: if NO event overlaps with showAs='busy' → 1 (free)
+           - If an event overlaps and showAs='busy' or 'tentative' → 0 (busy)
 
   STEP 3 → Build a binary array of EXACTLY (num_days × slots_per_day) values.
-           Example: 5 days × 24 slots = 120 values: [0,0,...,1,1,...]
+           Example: 5 days × 24 slots = 120 values: [0,0,...,1,1,...,0,0,...]
+           Non-work-hour slots are always 0.
 
   STEP 4 → Call submit_availability_array(meeting_id, availability=[your array])
            The system will run the privacy-preserving OT protocol automatically
@@ -74,6 +78,7 @@ You must complete ALL 5 steps in order:
 
 CRITICAL RULES:
   - You may ONLY fetch YOUR OWN calendar (fetch_my_calendar uses your agent identity)
+  - YOU must interpret raw events and build the binary array — the system does NOT do this for you
   - Do NOT reveal your raw availability to the other agent (only OT result is shared)
   - Always respect the 5-step order in planning phase"""
 
@@ -178,14 +183,17 @@ CRITICAL RULES:
                     "Follow these 5 steps IN ORDER:",
                     "",
                     "  [1] Call fetch_my_calendar(meeting_id=<your meeting id>)",
-                    "      → You will receive your calendar events and slot configuration.",
+                    "      → You will receive your RAW calendar events from Teams/Outlook.",
+                    "      → Each event has: subject, start, end, showAs, isOnlineMeeting.",
                     "",
-                    "  [2] Read the events. For each slot:",
-                    "      • status='free' AND 09:00≤hour<18:00  → 1 (available)",
-                    "      • anything else                        → 0 (busy)",
+                    "  [2] Read the raw events. YOU must decide your availability:",
+                    "      • Slots are 1-hour long, starting from 00:00",
+                    "      • Work hours: 09:00–18:00 only (outside = 0)",
+                    "      • If a busy event overlaps a work-hour slot → 0",
+                    "      • Otherwise work-hour slot → 1 (free)",
                     "",
                     "  [3] Build a binary array of EXACTLY (num_days × slots_per_day) integers.",
-                    "      Example: 5 × 24 = 120 values: [0,0,...,1,1,...]",
+                    "      Example: 5 × 24 = 120 values: [0,0,...,1,1,...,0,0,...]",
                     "",
                     "  [4] Call submit_availability_array(meeting_id=..., availability=[...])",
                     "      → OT runs automatically once BOTH agents have submitted.",

@@ -19,14 +19,13 @@ environment:
   num_days: 5
   slots_per_day: 24
   num_meetings: 1
-  availability_rate: 0.4   # fraction of slots randomly marked available (simulation mode)
-  intersections: 3          # guaranteed common slots in simulation mode
+  availability_rate: 0.4 # fraction of slots randomly marked available (simulation mode)
+  intersections: 3 # guaranteed common slots in simulation mode
 
   # ========== MICROSOFT GRAPH API ==========
   # These settings are used when use_real_calendars: true
-  # Credentials are read from here first; env vars (AZURE_CLIENT_ID etc.) are fallbacks.
+  # Credentials are read ONLY from this YAML file (no env var fallback).
   # SECURITY: Never commit real secrets to a public repo.
-  #           Use .env or a secret manager for production credentials.
   graph_api:
     # Azure App Registration — https://portal.azure.com → App registrations
     client_id: "584bab9e-1e06-4e81-805a-de9131078c57"
@@ -45,16 +44,17 @@ environment:
     # Map each agent name to the Microsoft account email whose calendar to read
     agent_emails:
       AgentA: "elifnr.yilmz@gmail.com"
-      AgentB: "ikinci.kullanici@example.com"   # replace with the second user's email
+      AgentB: "ikinci.kullanici@example.com" # replace with the second user's email
 
 communication_network:
   topology: complete
   num_agents: 2
 
 llm:
-  # LLM backend configuration — adjust to your infrastructure
-  provider: together_ai          # together_ai | openai | vllm | huggingface
-  model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+  provider: huggingface # Runs locally — no API key needed!
+  model: "Qwen/Qwen2.5-1.5B-Instruct" # Lightweight, tool-calling capable
   temperature: 0.0
-  max_tokens: 4096
+  max_tokens: 2048
+  device: "auto" # "auto" = GPU if available, else CPU
   trust_remote_code: true
+  # max_memory: {"0": "6GiB", "cpu": "16GiB"}   # Uncomment for multi-GPU / limited VRAM

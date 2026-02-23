@@ -167,8 +167,12 @@ class MeetingSchedulingTools:
         env_state: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Fetch the calling agent's calendar events via Graph API.
-        Uses env_state to get graph_api config (email, timezone, num_days, slots_per_day).
+        Fetch the calling agent's calendar events.
+
+        Two modes based on env_state["use_real_calendars"]:
+          • False (simulation): Return pre-generated availability from env_state
+          • True  (production): Fetch live data from Microsoft Graph API using
+                                 credentials from the YAML config (graph_api block)
         """
         if not env_state:
             return {"error": "env_state not provided — cannot fetch calendar."}
@@ -177,99 +181,148 @@ class MeetingSchedulingTools:
         if not meeting_id:
             return {"error": "'meeting_id' is required."}
 
-        # Pull config from env_state
+        num_days       = env_state.get("num_days", 5)
+        slots_per_day  = env_state.get("slots_per_day", 24)
+        total_slots    = num_days * slots_per_day
+        use_real       = env_state.get("use_real_calendars", False)
+
+        # ────────────────────────────────────────────────────────────────
+        # SIMULATION MODE — no Graph API needed
+        # ────────────────────────────────────────────────────────────────
+        if not use_real:
+            simulated = env_state.get("simulated_availability", {})
+            meeting_avail = simulated.get(meeting_id, {})
+            agent_slots = meeting_avail.get(agent_name)
+
+            if agent_slots is None:
+                return {
+                    "error": (
+                        f"No simulated availability found for agent '{agent_name}' "
+                        f"in meeting '{meeting_id}'. Check config."
+                    )
+                }
+
+            # Convert binary array to event-like structure for the LLM
+            from datetime import datetime, timedelta
+            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+            events = []
+            for i, val in enumerate(agent_slots):
+                slot_start = start_dt + timedelta(hours=i)
+                slot_end   = slot_start + timedelta(hours=1)
+                events.append({
+                    "slot_index": i,
+                    "start":  slot_start.isoformat(),
+                    "end":    slot_end.isoformat(),
+                    "status": "free" if val == 1 else "busy",
+                })
+
+            free_count = sum(agent_slots)
+            logger.info(
+                "🔬 [%s] SIMULATION MODE — %d/%d slots free | meeting=%s",
+                agent_name, free_count, total_slots, meeting_id,
+            )
+
+            return {
+                "meeting_id": meeting_id,
+                "agent":      agent_name,
+                "events":     events,
+                "slot_info": {
+                    "total_slots":           total_slots,
+                    "slots_per_day":         slots_per_day,
+                    "num_days":              num_days,
+                    "slot_duration_minutes": 60,
+                    "date_range":            f"{start_dt.date()} to {(start_dt + timedelta(days=num_days - 1)).date()}",
+                    "work_hours":            "09:00–18:00 (slots outside this range are marked busy)",
+                },
+                "instructions": (
+                    f"Build a binary array of EXACTLY {total_slots} integers (0 or 1).\n"
+                    "  • 1 = you are FREE at that slot\n"
+                    "  • 0 = you are BUSY at that slot\n"
+                    "  • Slots where status='busy' → 0\n"
+                    "  • All other slots → 1\n"
+                    f"Then call: submit_availability_array(meeting_id='{meeting_id}', "
+                    f"availability=[...{total_slots} values...])"
+                ),
+            }
+
+        # ────────────────────────────────────────────────────────────────
+        # PRODUCTION MODE — fetch RAW Teams/Outlook events from Graph API
+        # The code ONLY fetches raw data. The LLM reads the events and
+        # builds the binary availability array by itself.
+        # Credentials come ONLY from YAML (graph_api block in env_state)
+        # FAILS HARD: any error → RuntimeError → simulation stops
+        # ────────────────────────────────────────────────────────────────
         graph_config   = env_state.get("graph_api", {})
         agent_emails   = graph_config.get("agent_emails", {})
         email          = agent_emails.get(agent_name)
-        num_days       = env_state.get("num_days", 5)
-        slots_per_day  = env_state.get("slots_per_day", 24)
-        timezone       = graph_config.get("timezone", "UTC")
-        total_slots    = num_days * slots_per_day
+        timezone       = graph_config.get("timezone", "Turkey Standard Time")
 
         if not email:
-            return {
-                "error": f"No email configured for agent '{agent_name}'. "
-                         f"Set graph_api.agent_emails.{agent_name} in the config."
-            }
+            raise RuntimeError(
+                f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
+                f"   Set graph_api.agent_emails.{agent_name} in the YAML config."
+            )
 
         from datetime import datetime, timedelta
         try:
             from llm_server.clients.graph_client import GraphAPIClient
         except ImportError as exc:
-            return {"error": f"Graph API client not available: {exc}"}
+            raise RuntimeError(
+                "❌ SIMULATION STOPPED: Graph API dependencies missing.\n"
+                "   Run: pip install msal requests pytz"
+            ) from exc
 
         # Reuse or create the Graph API client (cached per tool instance)
         if not hasattr(self, "_graph_client") or self._graph_client is None:
-            import os
-            client_id = os.getenv("AZURE_CLIENT_ID")
-            if not client_id:
-                return {
-                    "error": (
-                        "AZURE_CLIENT_ID environment variable is not set. "
-                        "Please set it in your Colab/environment and restart: "
-                        "import os; os.environ['AZURE_CLIENT_ID'] = 'your-app-id'"
-                    )
-                }
-            try:
-                self._graph_client = GraphAPIClient(
-                    client_id=client_id,
-                    timezone=timezone,
-                    fresh_auth=True,
-                )
-                logger.info("✅ Graph API client initialised in MeetingSchedulingTools.")
-            except Exception as exc:
-                logger.exception("Failed to init Graph API client: %s", exc)
-                return {"error": f"Graph API client init failed: {exc}"}
+            self._graph_client = GraphAPIClient.from_yaml(env_state)
+            logger.info("✅ Graph API client initialised from YAML config.")
 
         start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt   = start_dt + timedelta(days=num_days)
 
-        try:
-            logger.info("📅 [%s] fetch_my_calendar | %s | %s → %s",
-                        agent_name, email, start_dt.date(), end_dt.date())
-            raw_slots = self._graph_client.get_availability(
-                email=email,
-                start_datetime=start_dt,
-                end_datetime=end_dt,
-                interval_minutes=60,
-            )
-        except Exception as exc:
-            logger.exception("Graph API call failed for %s: %s", agent_name, exc)
-            return {"error": f"Calendar fetch failed: {exc}"}
+        # Fetch RAW calendar data — code does NOT compute slots
+        logger.info("📅 [%s] fetch_raw_calendar | %s | %s → %s",
+                    agent_name, email, start_dt.date(), end_dt.date())
+        raw_data = self._graph_client.fetch_raw_calendar(
+            email=email,
+            start_datetime=start_dt,
+            end_datetime=end_dt,
+            timezone=timezone,
+        )
 
-        events = [
-            {
-                "slot_index": i,
-                "start":  s["start"],
-                "end":    s["end"],
-                "status": s["status"],
-            }
-            for i, s in enumerate(raw_slots)
-        ]
+        raw_events = raw_data.get("events", [])
+        user_info  = raw_data.get("user", {})
 
-        busy_count = sum(1 for e in events if e["status"] == "busy")
-        logger.info("📋 [%s] %d slots returned | %d busy | meeting=%s",
-                    agent_name, len(events), busy_count, meeting_id)
+        logger.info("📋 [%s] %d raw events fetched from Teams/Outlook | meeting=%s",
+                    agent_name, len(raw_events), meeting_id)
 
         return {
             "meeting_id": meeting_id,
             "agent":      agent_name,
-            "events":     events,
+            "user":       user_info,
+            "raw_events": raw_events,
             "slot_info": {
                 "total_slots":           total_slots,
                 "slots_per_day":         slots_per_day,
                 "num_days":              num_days,
                 "slot_duration_minutes": 60,
                 "date_range":            f"{start_dt.date()} to {(end_dt - timedelta(days=1)).date()}",
-                "work_hours":            "09:00–18:00 (slots outside this range are marked busy)",
             },
             "instructions": (
-                f"Build a binary array of EXACTLY {total_slots} integers (0 or 1).\n"
-                "  • 1 = you are FREE at that slot\n"
-                "  • 0 = you are BUSY at that slot\n"
-                "  • Slots where status='busy' → 0\n"
-                "  • Slots outside 09:00–18:00 work hours → 0\n"
-                "  • All other slots → 1\n"
+                "You received your RAW calendar events from Microsoft Teams/Outlook.\n"
+                "Now YOU must build a binary availability array.\n\n"
+                "RULES:\n"
+                f"  • Array length MUST be EXACTLY {total_slots} (= {num_days} days × {slots_per_day} slots/day)\n"
+                "  • Each slot = 1 hour, starting from 00:00 of the first day\n"
+                "  • Slot 0 = Day1 00:00–01:00, Slot 1 = Day1 01:00–02:00, ..., Slot 9 = Day1 09:00–10:00, etc.\n"
+                "  • Work hours: 09:00–18:00 (slots outside this = 0)\n\n"
+                "HOW TO BUILD THE ARRAY:\n"
+                "  1. Start with all slots = 0\n"
+                "  2. For slots within 09:00–18:00 work hours: set to 1 (available)\n"
+                "  3. For each event in raw_events where showAs='busy' or 'tentative':\n"
+                "     Find which slot(s) overlap with the event time → set those to 0\n"
+                "  4. Slots outside 09:00–18:00 remain 0\n\n"
                 f"Then call: submit_availability_array(meeting_id='{meeting_id}', "
                 f"availability=[...{total_slots} values...])"
             ),

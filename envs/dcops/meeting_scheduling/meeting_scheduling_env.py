@@ -10,9 +10,8 @@ import os
 import logging
 logger = logging.getLogger(__name__)
 
-# Azure credentials are now read from examples/configs/meeting_scheduling.yaml
-# (environment.graph_api block).  Env vars (AZURE_CLIENT_ID, etc.) are used as
-# fallbacks for backwards compatibility — no hardcoded values here.
+# Azure credentials are read EXCLUSIVELY from examples/configs/meeting_scheduling.yaml
+# (environment.graph_api block).  No env var fallbacks — YAML is the single source of truth.
 
 # Use TYPE_CHECKING to avoid circular import (BaseAgent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → BaseAgent)
 if TYPE_CHECKING:
@@ -30,10 +29,11 @@ from .meeting_scheduling_prompts import MeetingSchedulingPrompts
 
 class SimpleMeeting:
     """Simple meeting object."""
-    def __init__(self, meeting_id: str, title: str, participants: List[str]):
+    def __init__(self, meeting_id: str, title: str, participants: List[str], meeting_type: str = "soft"):
         self.meeting_id = meeting_id
         self.title = title
         self.participants = participants
+        self.meeting_type = meeting_type  # "soft" or "strict"; used by get_serializable_state
 
 
 class SimpleProblemDefinition:
@@ -150,6 +150,15 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Cache for meeting intersections (computed once via OT, reused everywhere)
         self._meeting_intersections_cache: Optional[Dict] = None
 
+        # Pre-generate and cache simulated availability (deterministic via seed)
+        # Used when use_real_calendars=False so tools return consistent data
+        self._simulated_availability_cache: Dict[str, Dict[str, List[int]]] = {}
+        if not self.env_config.get("use_real_calendars", False):
+            for meeting in self.meetings:
+                self._simulated_availability_cache[meeting.meeting_id] = (
+                    self._generate_simulated_availability(meeting.participants)
+                )
+
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
         logger.info("Total meetings to schedule: %s", len(self.meetings))
@@ -159,7 +168,83 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     async def async_init(self):
         await super().async_init()
-        logger.info("🚀 Agentic mode ready — agents will fetch calendars via fetch_my_calendar tool.")
+
+        use_real = self.env_config.get("use_real_calendars", False)
+
+        if use_real:
+            # ── HARD VALIDATION: Graph API MUST work or simulation dies ──
+            logger.info("=" * 80)
+            logger.info("🔒 use_real_calendars=true → Validating Graph API connection at startup")
+            logger.info("=" * 80)
+
+            # 1. Check dependencies
+            try:
+                import msal, requests, pytz  # noqa: F401
+            except ImportError as exc:
+                raise RuntimeError(
+                    "❌ SIMULATION CANNOT START: Graph API dependencies missing.\n"
+                    "   Run: pip install msal requests pytz\n"
+                    f"   Error: {exc}"
+                ) from exc
+
+            # 2. Check YAML config has required fields
+            graph_config = self.env_config.get("graph_api", {})
+            client_id = graph_config.get("client_id")
+            tenant_id = graph_config.get("tenant_id")
+
+            if not client_id:
+                raise RuntimeError(
+                    "❌ SIMULATION CANNOT START: graph_api.client_id is missing in YAML config.\n"
+                    "   Add it under environment.graph_api.client_id in your YAML file."
+                )
+            if not tenant_id:
+                raise RuntimeError(
+                    "❌ SIMULATION CANNOT START: graph_api.tenant_id is missing in YAML config.\n"
+                    "   Add it under environment.graph_api.tenant_id in your YAML file."
+                )
+
+            # 3. Check agent_emails mapping
+            agent_emails = graph_config.get("agent_emails", {})
+            for agent_name in self.agent_names:
+                if agent_name not in agent_emails or not agent_emails[agent_name]:
+                    raise RuntimeError(
+                        f"❌ SIMULATION CANNOT START: No email configured for agent '{agent_name}'.\n"
+                        f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
+                    )
+
+            # 4. Initialize Graph API client and authenticate
+            try:
+                from llm_server.clients.graph_client import GraphAPIClient
+                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
+                logger.info("✅ Graph API client initialized from YAML config.")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"❌ SIMULATION CANNOT START: Graph API client initialization failed.\n"
+                    f"   Error: {exc}\n"
+                    f"   Check your YAML config: client_id={client_id}, tenant_id={tenant_id}"
+                ) from exc
+
+            # 5. Authenticate for each agent (device code flow)
+            for agent_name in self.agent_names:
+                email = agent_emails[agent_name]
+                try:
+                    logger.info("🔑 Authenticating %s (%s)...", agent_name, email)
+                    token = self._graph_client.get_token_for_user(email=email)
+                    if not token:
+                        raise RuntimeError(f"Authentication returned empty token for {email}")
+                    logger.info("✅ %s (%s) authenticated successfully.", agent_name, email)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"❌ SIMULATION CANNOT START: Authentication failed for {agent_name} ({email}).\n"
+                        f"   Error: {exc}\n"
+                        f"   Make sure you complete the device code flow for this account."
+                    ) from exc
+
+            logger.info("=" * 80)
+            logger.info("✅ ALL Graph API VALIDATIONS PASSED — real calendars will be used.")
+            logger.info("=" * 80)
+        else:
+            logger.info("🔬 Simulation mode — using pre-generated availability data.")
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
@@ -386,53 +471,43 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         """
         Fetch REAL availability from Microsoft Outlook calendars via Graph API.
         
-        This requires:
-        - Azure App Registration with proper permissions
-        - Environment variables: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
-        - User authentication credentials
-        - graph_api config section with agent_emails mapping
+        FAILS HARD: If anything goes wrong (missing email, API error, etc.),
+        a RuntimeError is raised and the simulation stops. No silent fallbacks.
         
         Args:
             participants: List of agent names participating in this meeting
             
         Returns:
-            Dictionary mapping agent names to their availability lists for this meeting
+            Dictionary mapping agent names to their availability lists
             
         Raises:
-            ImportError: If graph_client dependencies not installed
-            Exception: If Graph API call fails
+            RuntimeError: If ANY agent's calendar cannot be fetched
         """
         from datetime import datetime, timedelta
         from src.availability import AvailabilityConstants
         
         try:
             from llm_server.clients.graph_client import GraphAPIClient
-        except ImportError:
-            logger.error(
-                "❌ Graph API client not available. Install dependencies: "
-                "pip install msal requests pytz"
-            )
-            raise
+        except ImportError as exc:
+            raise RuntimeError(
+                "❌ SIMULATION STOPPED: Graph API dependencies missing.\n"
+                "   Run: pip install msal requests pytz"
+            ) from exc
         
-        # Initialize Graph API client (lazy loading, reuse if already created)
+        # Graph client should already be initialized in async_init
         if not hasattr(self, '_graph_client'):
-            graph_config = self.env_config.get("graph_api", {})
-            
-            timezone = graph_config.get("timezone", "UTC")
-            
             try:
-                # Create client from YAML config (env vars used as fallback inside from_yaml)
                 self._graph_client = GraphAPIClient.from_yaml(self.full_config)
-                logger.info("✅ Graph API client initialized from YAML config — Device Flow will trigger if tokens are missing.")
             except Exception as e:
-                logger.error(f"❌ Failed to initialize Graph API client: {e}")
-                raise
+                raise RuntimeError(
+                    f"❌ SIMULATION STOPPED: Failed to initialize Graph API client: {e}"
+                ) from e
         
         # Get agent email mapping
         graph_config = self.env_config.get("graph_api", {})
         agent_emails = graph_config.get("agent_emails", {})
         
-        # Calculate time window (next num_days days)
+        # Calculate time window
         start_datetime = datetime.now()
         end_datetime = start_datetime + timedelta(days=self.num_days)
         
@@ -443,38 +518,31 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             email = agent_emails.get(agent_name)
             
             if not email:
-                logger.error(f"❌ No email configured for agent: {agent_name}")
-                # Fallback to empty availability
-                availability[agent_name] = [AvailabilityConstants.BUSY] * total_slots
-                continue
+                raise RuntimeError(
+                    f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
+                    f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
+                )
             
-            try:
-                # Fetch availability from Graph API
-                logger.info(f"📅 Fetching availability for {agent_name} ({email})...")
-                
-                # Get schedule in 1-hour slots (Graph API limitation)
-                raw_availability = self._graph_client.get_availability(
-                    email=email,
-                    start_datetime=start_datetime,
-                    end_datetime=end_datetime,
-                    interval_minutes=60
-                )
-                
-                # Convert Graph API response to our slot format
-                slots = self._convert_graph_availability_to_slots(
-                    raw_availability,
-                    total_slots
-                )
-                
-                availability[agent_name] = slots
-                
-                available_count = sum(slots)
-                logger.info(f"  ✅ {agent_name}: {available_count}/{total_slots} available slots")
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to fetch availability for {agent_name}: {e}")
-                # Fallback to empty availability
-                availability[agent_name] = [AvailabilityConstants.BUSY] * total_slots
+            # Fetch availability — NO try/except fallback, let it crash
+            logger.info(f"📅 Fetching availability for {agent_name} ({email})...")
+            
+            raw_availability = self._graph_client.get_availability(
+                email=email,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                interval_minutes=60
+            )
+            
+            # Convert Graph API response to our slot format
+            slots = self._convert_graph_availability_to_slots(
+                raw_availability,
+                total_slots
+            )
+            
+            availability[agent_name] = slots
+            
+            available_count = sum(slots)
+            logger.info(f"  ✅ {agent_name}: {available_count}/{total_slots} available slots")
         
         return availability
     
@@ -550,36 +618,29 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         email = agent_emails.get(agent_name)
 
         if not email:
-            return {
-                "error": f"No email configured for agent '{agent_name}'. "
-                         f"Check graph_api.agent_emails in the config."
-            }
+            raise RuntimeError(
+                f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
+                f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
+            )
 
-        # Lazy-init Graph API client
+        # Lazy-init Graph API client (should already exist from async_init)
         if not hasattr(self, "_graph_client"):
-            try:
-                from llm_server.clients.graph_client import GraphAPIClient
-                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
-                logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
-            except Exception as exc:
-                logger.exception("Failed to initialise Graph API client: %s", exc)
-                return {"error": f"Graph API client initialisation failed: {exc}"}
+            from llm_server.clients.graph_client import GraphAPIClient
+            self._graph_client = GraphAPIClient.from_yaml(self.full_config)
+            logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
 
         total_slots = self.num_days * self.slots_per_day
         start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt   = start_dt + timedelta(days=self.num_days)
 
-        try:
-            logger.info("📅 [%s] Fetching calendar for %s (%s → %s)", agent_name, email, start_dt.date(), end_dt.date())
-            raw_slots = self._graph_client.get_availability(
-                email=email,
-                start_datetime=start_dt,
-                end_datetime=end_dt,
-                interval_minutes=60,
-            )
-        except Exception as exc:
-            logger.exception("Graph API call failed for %s: %s", agent_name, exc)
-            return {"error": f"Calendar fetch failed: {exc}"}
+        # No try/except — let it crash and stop the simulation
+        logger.info("📅 [%s] Fetching calendar for %s (%s → %s)", agent_name, email, start_dt.date(), end_dt.date())
+        raw_slots = self._graph_client.get_availability(
+            email=email,
+            start_datetime=start_dt,
+            end_datetime=end_dt,
+            interval_minutes=60,
+        )
 
         # Convert slots list to a simple event list the LLM can reason about
         events = [
@@ -1158,6 +1219,15 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Include graph_api config so tools can use it without a direct env reference
         graph_api = self.env_config.get("graph_api", {})
 
+        # Include use_real_calendars so tools know whether to call Graph API or use simulation
+        use_real_calendars = self.env_config.get("use_real_calendars", False)
+
+        # Include simulated availability when in simulation mode so tools can return it
+        # without needing Graph API
+        simulated_availability = {}
+        if not use_real_calendars:
+            simulated_availability = self._simulated_availability_cache
+
         return {
             "meetings":     meetings,
             "attendance":   self.assignment.copy(),
@@ -1165,6 +1235,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "num_days":     self.num_days,
             "slots_per_day": self.slots_per_day,
             "graph_api":    graph_api,
+            "use_real_calendars": use_real_calendars,
+            "simulated_availability": simulated_availability,
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:
