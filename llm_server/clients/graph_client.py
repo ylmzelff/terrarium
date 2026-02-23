@@ -666,14 +666,19 @@ class GraphAPIClient:
             ValueError: If required env vars not set
         """
         client_id = os.getenv("AZURE_CLIENT_ID")
-        client_secret = os.getenv("AZURE_CLIENT_SECRET")
-        tenant_id = os.getenv("AZURE_TENANT_ID")
+        client_secret = os.getenv("AZURE_CLIENT_SECRET")  # optional for device flow
+        tenant_id = os.getenv("AZURE_TENANT_ID", "common")  # default to 'common'
         
-        if not all([client_id, client_secret, tenant_id]):
+        if not client_id:
             raise ValueError(
-                "Missing required environment variables: "
-                "AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID"
+                "Missing required environment variable: AZURE_CLIENT_ID. "
+                "Set it with: import os; os.environ['AZURE_CLIENT_ID'] = 'your-app-id'"
             )
+        
+        if not client_secret:
+            logger.warning("AZURE_CLIENT_SECRET not set — using device code flow (no secret needed).")
+        if tenant_id == "common":
+            logger.info("AZURE_TENANT_ID not set — using 'common' (works for personal/work accounts).")
         
         return cls(
             client_id=client_id,
@@ -681,6 +686,89 @@ class GraphAPIClient:
             tenant_id=tenant_id,
             timezone=timezone,
             fresh_auth=fresh_auth
+        )
+
+    @classmethod
+    def from_yaml(cls, yaml_config: dict, fresh_auth: Optional[bool] = None) -> "GraphAPIClient":
+        """
+        Create client from a loaded YAML config dictionary.
+
+        Reads the ``graph_api`` block from the full simulation config.
+        Missing values fall back to the corresponding environment variables so
+        that this method is a *superset* of ``from_env()``; you can gradually
+        migrate credentials from env vars to the YAML file.
+
+        Args:
+            yaml_config: The full parsed YAML config dict (i.e., the dict
+                         returned by ``yaml.safe_load(open("meeting_scheduling.yaml"))``).
+            fresh_auth:  Override the ``fresh_auth`` flag in the YAML block.
+                         If None, the YAML value (default: True) is used.
+
+        Returns:
+            Initialized GraphAPIClient.
+
+        Raises:
+            ValueError: If ``client_id`` is missing in both YAML and env vars.
+
+        Example::
+
+            import yaml
+            from llm_server.clients.graph_client import GraphAPIClient
+
+            with open("examples/configs/meeting_scheduling.yaml") as f:
+                cfg = yaml.safe_load(f)
+
+            client = GraphAPIClient.from_yaml(cfg)
+        """
+        # Support both flat config and nested environment config
+        env_cfg: dict = yaml_config.get("environment", yaml_config)
+        graph_cfg: dict = env_cfg.get("graph_api", {})
+
+        # --- credentials: YAML first, env-var fallback ---
+        client_id = graph_cfg.get("client_id") or os.getenv("AZURE_CLIENT_ID")
+        client_secret = graph_cfg.get("client_secret") or os.getenv("AZURE_CLIENT_SECRET")
+        tenant_id = (
+            graph_cfg.get("tenant_id")
+            or os.getenv("AZURE_TENANT_ID", "common")
+        )
+
+        # --- optional settings with sensible defaults ---
+        timezone = graph_cfg.get("timezone", "UTC")
+        token_cache_path = graph_cfg.get("token_cache_path", "token_cache.bin")
+        yaml_fresh_auth: bool = graph_cfg.get("fresh_auth", True)
+        # Caller-supplied override takes precedence over the YAML value
+        effective_fresh_auth = fresh_auth if fresh_auth is not None else yaml_fresh_auth
+
+        # --- validation ---
+        if not client_id:
+            raise ValueError(
+                "graph_api.client_id is missing in the YAML config and the "
+                "AZURE_CLIENT_ID environment variable is not set. "
+                "Add it under environment.graph_api.client_id in your YAML file."
+            )
+
+        if not client_secret:
+            logger.warning(
+                "graph_api.client_secret not provided — using device-code flow (no secret needed)."
+            )
+        if tenant_id == "common":
+            logger.info(
+                "graph_api.tenant_id not set — using 'common' authority "
+                "(supports personal and work/school accounts)."
+            )
+
+        logger.info(
+            "GraphAPIClient.from_yaml(): client_id=%s, tenant_id=%s, timezone=%s",
+            client_id, tenant_id, timezone,
+        )
+
+        return cls(
+            client_id=client_id,
+            client_secret=client_secret,
+            tenant_id=tenant_id,
+            timezone=timezone,
+            token_cache_path=token_cache_path,
+            fresh_auth=effective_fresh_auth,
         )
 
 

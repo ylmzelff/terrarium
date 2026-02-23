@@ -6,8 +6,13 @@ using privacy-preserving Oblivious Transfer (OT) protocol.
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
 
+import os
 import logging
 logger = logging.getLogger(__name__)
+
+# Azure credentials are now read from examples/configs/meeting_scheduling.yaml
+# (environment.graph_api block).  Env vars (AZURE_CLIENT_ID, etc.) are used as
+# fallbacks for backwards compatibility — no hardcoded values here.
 
 # Use TYPE_CHECKING to avoid circular import (BaseAgent → ToolsetDiscovery → MeetingSchedulingEnvironmentTools → MeetingSchedulingEnvironment → BaseAgent)
 if TYPE_CHECKING:
@@ -416,9 +421,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             timezone = graph_config.get("timezone", "UTC")
             
             try:
-                # Create client from environment variables
-                self._graph_client = GraphAPIClient.from_env(timezone=timezone)
-                logger.info("✅ Graph API client initialized - Device Flow Authentication will trigger if tokens are missing.")
+                # Create client from YAML config (env vars used as fallback inside from_yaml)
+                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
+                logger.info("✅ Graph API client initialized from YAML config — Device Flow will trigger if tokens are missing.")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Graph API client: {e}")
                 raise
@@ -554,9 +559,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         if not hasattr(self, "_graph_client"):
             try:
                 from llm_server.clients.graph_client import GraphAPIClient
-                tz = graph_config.get("timezone", "UTC")
-                self._graph_client = GraphAPIClient.from_env(timezone=tz)
-                logger.info("✅ Graph API client initialised for agentic tool flow.")
+                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
+                logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
             except Exception as exc:
                 logger.exception("Failed to initialise Graph API client: %s", exc)
                 return {"error": f"Graph API client initialisation failed: {exc}"}

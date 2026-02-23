@@ -200,8 +200,22 @@ class MeetingSchedulingTools:
 
         # Reuse or create the Graph API client (cached per tool instance)
         if not hasattr(self, "_graph_client") or self._graph_client is None:
+            import os
+            client_id = os.getenv("AZURE_CLIENT_ID")
+            if not client_id:
+                return {
+                    "error": (
+                        "AZURE_CLIENT_ID environment variable is not set. "
+                        "Please set it in your Colab/environment and restart: "
+                        "import os; os.environ['AZURE_CLIENT_ID'] = 'your-app-id'"
+                    )
+                }
             try:
-                self._graph_client = GraphAPIClient.from_env(timezone=timezone)
+                self._graph_client = GraphAPIClient(
+                    client_id=client_id,
+                    timezone=timezone,
+                    fresh_auth=True,
+                )
                 logger.info("✅ Graph API client initialised in MeetingSchedulingTools.")
             except Exception as exc:
                 logger.exception("Failed to init Graph API client: %s", exc)
