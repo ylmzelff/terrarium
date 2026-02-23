@@ -304,7 +304,9 @@ class BaseAgent:
 
             if step_tools:
                 trajectory_dict[f"step_{step + 1}"] = {"tools": step_tools}
-                logger.info(f"   ↳ Adım {step+1}'de {tool_calls_executed} araç çağrıldı: {[t.get('name') for t in step_tools]}")
+                logger.info(f"   ↳ Adım {step+1}'de {tool_calls_executed} araç çağrıldı: "
+                            f"{[t.get('name') if isinstance(t, dict) else str(t) for t in step_tools]}")
+
 
             if tool_calls_executed == 0:
                 logger.info(f"   ✅ Araç çağrısı yok — konuşma tamamlandı (toplam {conversation_steps} adım)")
