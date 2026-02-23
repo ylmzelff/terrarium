@@ -31,18 +31,24 @@ from src.utils import (
     get_generation_params,
 )
 import asyncio
+import os
 from fastmcp import Client
-from requests.exceptions import ConnectionError
 from src.logger import ToolCallLogger, AgentTrajectoryLogger
 from dotenv import load_dotenv
 
-# Run src.server.py to initialzie MCP server before running main.py
-try:
-    mcp_client = Client("http://localhost:8000/mcp")
-except ConnectionError as exc:
-    raise RuntimeError(
-        "MCP server is not running. Start it with `python src/server.py` before retrying."
-    ) from exc
+# MCP client setup:
+# - Prefer IN-PROCESS mode (no separate server needed, ideal for Colab)
+# - Falls back to HTTP mode if MCP_HTTP_URL env var is set
+_mcp_http_url = os.environ.get("MCP_HTTP_URL")
+if _mcp_http_url:
+    # HTTP mode: connect to a separately running MCP server
+    mcp_client = Client(_mcp_http_url)
+    logging.info("MCP client: HTTP mode → %s", _mcp_http_url)
+else:
+    # In-process mode: import the server directly (no subprocess needed)
+    from src.server import mcp as _mcp_server
+    mcp_client = Client(_mcp_server)
+    logging.info("MCP client: in-process mode (no separate server needed)")
 
 async def run_simulation(config: Dict[str, Any]) -> bool:
     vllm_runtime = None

@@ -297,6 +297,26 @@ class MeetingSchedulingTools:
         logger.info("📋 [%s] %d raw events fetched from Teams/Outlook | meeting=%s",
                     agent_name, len(raw_events), meeting_id)
 
+        # -------------------------------------------------------------------
+        # Pretty console print for debugging (so the user can see what the LLM sees)
+        # -------------------------------------------------------------------
+        print(f"\n{'='*80}")
+        print(f"🗓️  [{agent_name}] CALENDAR EVENTS FETCHED FROM GRAPH API")
+        print(f"{'-'*80}")
+        if not raw_events:
+            print("   (No events found in this date range)")
+        else:
+            for i, evt in enumerate(raw_events):
+                subj   = evt.get('subject', 'No Subject') or 'No Subject'
+                start  = evt.get('start', '')
+                end    = evt.get('end', '')
+                showAs = str(evt.get('showAs', '')).upper()
+                start_dt_str = start[:16].replace("T", " ") if len(start) >= 16 else start
+                end_dt_str   = end[:16].replace("T", " ") if len(end) >= 16 else end
+                print(f"   {i+1:02d}. {start_dt_str} → {end_dt_str} | {showAs:9} | {subj}")
+        print(f"{'='*80}\n")
+
+
         return {
             "meeting_id": meeting_id,
             "agent":      agent_name,
@@ -378,6 +398,27 @@ class MeetingSchedulingTools:
             "📥 Availability submitted | meeting=%s | agent=%s | free=%d/%d",
             meeting_id, agent_name, free_count, total_slots,
         )
+
+        # -------------------------------------------------------------------
+        # Pretty console print to show the matrix the LLM built
+        # -------------------------------------------------------------------
+        print(f"\n{'='*80}")
+        print(f"🧠 [{agent_name}] LLM GENERATED BINARY ARRAY (Meeting: {meeting_id})")
+        print(f"{'-'*80}")
+        # Print a header row like 00 01 02 ... 23
+        header = "      " + " ".join(f"{hr:02d}" for hr in range(min(slots_per_day, 24)))
+        print(header)
+        
+        # Determine actual days based on array length just in case
+        actual_days = len(availability) // slots_per_day
+        for day in range(actual_days):
+            s_idx = day * slots_per_day
+            e_idx = s_idx + slots_per_day
+            day_slots = availability[s_idx:e_idx]
+            slot_str  = "  ".join(str(x) for x in day_slots)
+            print(f"Day {day+1}: {slot_str}")
+            
+        print(f"{'='*80}\n")
 
         # Who are the participants for this meeting?
         meetings     = env_state.get("meetings", {}) if env_state else {}

@@ -28,8 +28,8 @@ environment:
   # SECURITY: Never commit real secrets to a public repo.
   graph_api:
     # Azure App Registration — https://portal.azure.com → App registrations
-    client_id: "584bab9e-1e06-4e81-805a-de9131078c57"
-    tenant_id: "aaac062a-4a59-4297-8e0e-8fed08bb0f74"
+    client_id: ""
+    tenant_id: ""
 
     # Timezone for calendar queries (IANA or Windows tz name)
     timezone: "Turkey Standard Time"
@@ -52,7 +52,7 @@ communication_network:
 
 llm:
   provider: huggingface # Runs locally — no API key needed!
-  model: "Qwen/Qwen2.5-1.5B-Instruct" # Lightweight, tool-calling capable
+  model: "Qwen/Qwen2.5-7B-Instruct" # Lightweight, tool-calling capable
   temperature: 0.0
   max_tokens: 2048
   device: "auto" # "auto" = GPU if available, else CPU
