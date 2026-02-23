@@ -63,11 +63,10 @@ class SimpleProblemDefinition:
 
 
 class MeetingSchedulingEnvironment(AbstractEnvironment):
-    """
-    MeetingScheduling environment adaptor for attendance‑interval coordination tasks.
+    """MeetingScheduling environment for multi-agent coordination.
 
-    Agents decide how long to attend each meeting they are assigned to, aiming
-    to maximize joint reward while avoiding overlaps.
+    Agents coordinate attendance decisions to maximize joint reward
+    while respecting availability constraints discovered via OT protocol.
     """
 
     def __init__(self, communication_protocol, config, tool_logger):
@@ -231,11 +230,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         return local_rewards.get(agent, 0.0)
 
     def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
-        """
-        Compute simplified rewards based on successful slot selections.
+        """Compute rewards based on successful slot selections.
         
         Reward = 1.0 for each agent that selected a valid slot from the intersection.
-        This replaces the complex CoLLAB scoring system.
         """
         total_reward = 0.0
         local_rewards: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
@@ -275,7 +272,32 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
         """
-        Generate availability arrays with GUARANTEED intersections for a specific meeting.
+        Generate availability arrays for meeting participants.
+        
+        This is the main entry point for availability generation. It dispatches to either:
+        - Simulation mode (_generate_simulated_availability): Controlled test data
+        - Production mode (_fetch_real_availability): Real Outlook calendars via Graph API
+        
+        Mode is controlled by 'use_real_calendars' config parameter.
+        
+        Args:
+            participants: List of agent names participating in this meeting
+            
+        Returns:
+            Dictionary mapping agent names to their availability lists for this meeting
+        """
+        use_real_calendars = self.env_config.get("use_real_calendars", False)
+        
+        if use_real_calendars:
+            logger.info("📅 Production mode: Fetching real availability from Microsoft Graph API")
+            return self._fetch_real_availability(participants)
+        else:
+            logger.info("🔬 Simulation mode: Generating controlled test availability")
+            return self._generate_simulated_availability(participants)
+    
+    def _generate_simulated_availability(self, participants: List[str]) -> Dict[str, List[int]]:
+        """
+        Generate SIMULATED availability arrays with GUARANTEED intersections.
         
         The 'intersections' config parameter controls how many slots ALL participants
         are guaranteed to be available. This creates a controlled test scenario where
@@ -318,7 +340,12 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         availability = {}
         
         # Step 2: Generate availability for each participant
-        for agent_name in participants:
+        for agent_idx, agent_name in enumerate(participants):
+            # Use agent-specific random seed for reproducibility but agent-level variation
+            # This ensures different agents have different availability patterns
+            agent_seed = self.current_seed + hash(agent_name) % 10000
+            rng = random.Random(agent_seed)
+            
             slots = [AvailabilityConstants.BUSY] * total_slots  # Start with all busy
             
             # Step 2a: Set intersection slots to AVAILABLE for this agent
@@ -329,7 +356,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             # (but never override the guaranteed intersection slots)
             remaining_slots = [i for i in range(total_slots) if i not in intersection_slots]
             for slot_idx in remaining_slots:
-                is_available = random.random() < availability_rate
+                is_available = rng.random() < availability_rate  # Agent-specific random
                 slots[slot_idx] = (
                     AvailabilityConstants.AVAILABLE if is_available 
                     else AvailabilityConstants.BUSY
@@ -350,6 +377,148 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         )
         
         return availability
+
+    def _fetch_real_availability(self, participants: List[str]) -> Dict[str, List[int]]:
+        """
+        Fetch REAL availability from Microsoft Outlook calendars via Graph API.
+        
+        This requires:
+        - Azure App Registration with proper permissions
+        - Environment variables: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+        - User authentication credentials
+        - graph_api config section with agent_emails mapping
+        
+        Args:
+            participants: List of agent names participating in this meeting
+            
+        Returns:
+            Dictionary mapping agent names to their availability lists for this meeting
+            
+        Raises:
+            ImportError: If graph_client dependencies not installed
+            Exception: If Graph API call fails
+        """
+        from datetime import datetime, timedelta
+        from src.availability import AvailabilityConstants
+        
+        try:
+            from llm_server.clients.graph_client import GraphAPIClient
+        except ImportError:
+            logger.error(
+                "❌ Graph API client not available. Install dependencies: "
+                "pip install msal requests pytz"
+            )
+            raise
+        
+        # Initialize Graph API client (lazy loading, reuse if already created)
+        if not hasattr(self, '_graph_client'):
+            graph_config = self.env_config.get("graph_api", {})
+            
+            timezone = graph_config.get("timezone", "UTC")
+            
+            try:
+                # Create client from environment variables
+                self._graph_client = GraphAPIClient.from_env(timezone=timezone)
+                logger.info("✅ Graph API client initialized - Device Flow Authentication will trigger if tokens are missing.")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Graph API client: {e}")
+                raise
+        
+        # Get agent email mapping
+        graph_config = self.env_config.get("graph_api", {})
+        agent_emails = graph_config.get("agent_emails", {})
+        
+        # Calculate time window (next num_days days)
+        start_datetime = datetime.now()
+        end_datetime = start_datetime + timedelta(days=self.num_days)
+        
+        availability = {}
+        total_slots = self.num_days * self.slots_per_day
+        
+        for agent_name in participants:
+            email = agent_emails.get(agent_name)
+            
+            if not email:
+                logger.error(f"❌ No email configured for agent: {agent_name}")
+                # Fallback to empty availability
+                availability[agent_name] = [AvailabilityConstants.BUSY] * total_slots
+                continue
+            
+            try:
+                # Fetch availability from Graph API
+                logger.info(f"📅 Fetching availability for {agent_name} ({email})...")
+                
+                # Get schedule in 1-hour slots (Graph API limitation)
+                raw_availability = self._graph_client.get_availability(
+                    email=email,
+                    start_datetime=start_datetime,
+                    end_datetime=end_datetime,
+                    interval_minutes=60
+                )
+                
+                # Convert Graph API response to our slot format
+                slots = self._convert_graph_availability_to_slots(
+                    raw_availability,
+                    total_slots
+                )
+                
+                availability[agent_name] = slots
+                
+                available_count = sum(slots)
+                logger.info(f"  ✅ {agent_name}: {available_count}/{total_slots} available slots")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch availability for {agent_name}: {e}")
+                # Fallback to empty availability
+                availability[agent_name] = [AvailabilityConstants.BUSY] * total_slots
+        
+        return availability
+    
+    def _convert_graph_availability_to_slots(
+        self,
+        raw_availability: List[Dict],
+        total_slots: int
+    ) -> List[int]:
+        """
+        Convert Graph API availability response to binary slot array.
+        
+        Graph API returns:
+        [
+            {"start": "2026-02-21T09:00:00", "end": "2026-02-21T10:00:00", "status": "free"},
+            {"start": "2026-02-21T10:00:00", "end": "2026-02-21T11:00:00", "status": "busy"},
+            ...
+        ]
+        
+        We convert to: [1, 0, ...] where 1=available, 0=busy
+        
+        Args:
+            raw_availability: List of time slots with status from Graph API
+            total_slots: Expected total number of slots
+            
+        Returns:
+            Binary availability array
+        """
+        from src.availability import AvailabilityConstants
+        
+        slots = []
+        
+        for slot_data in raw_availability[:total_slots]:
+            status = slot_data.get("status", "busy")
+            
+            # Map Graph API status to our binary format
+            # "free" = available (1), everything else = busy (0)
+            is_available = status == "free"
+            
+            slots.append(
+                AvailabilityConstants.AVAILABLE if is_available
+                else AvailabilityConstants.BUSY
+            )
+        
+        # Pad with busy slots if Graph API returned fewer slots than expected
+        while len(slots) < total_slots:
+            slots.append(AvailabilityConstants.BUSY)
+        
+        return slots[:total_slots]  # Trim if too many
 
 
     def _generate_availability_slots(self) -> Dict[str, List[int]]:
@@ -516,7 +685,36 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 # Get all blackboards via MCP
                 async with self.communication_protocol.mcp_client as client:
                     blackboards_result = await client.call_tool("return_blackboards", {})
-                    blackboards = blackboards_result.data if hasattr(blackboards_result, 'data') else blackboards_result
+                    
+                    # Parse MCP response (handle TextContent and other formats)
+                    import json
+                    blackboards = None
+                    
+                    # Direct list/dict
+                    if isinstance(blackboards_result, list):
+                        blackboards = blackboards_result
+                    # Has content attribute (TextContent or similar)
+                    elif hasattr(blackboards_result, 'content'):
+                        content = blackboards_result.content
+                        # TextContent with text attribute (JSON string)
+                        if hasattr(content, 'text'):
+                            try:
+                                blackboards = json.loads(content.text)
+                            except json.JSONDecodeError:
+                                logger.error(f"Failed to parse blackboards JSON: {content.text}")
+                                blackboards = []
+                        # Content is already a list
+                        elif isinstance(content, list):
+                            blackboards = content
+                    # Has data attribute
+                    elif hasattr(blackboards_result, 'data'):
+                        blackboards = blackboards_result.data
+                    # Fallback: try JSON parse
+                    else:
+                        try:
+                            blackboards = json.loads(str(blackboards_result))
+                        except:
+                            blackboards = []
                 
                 if not blackboards:
                     logger.warning(f"No blackboards available for logging {meeting_title}")
@@ -524,10 +722,44 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 
                 # Log to each blackboard with relevant agents
                 for blackboard in blackboards:
-                    blackboard_id = int(blackboard['blackboard_id'])
+                    # Parse blackboard object (handle TextContent, dict, or object)
+                    blackboard_id = None
+                    blackboard_agents = None
+                    
+                    if isinstance(blackboard, dict):
+                        # Direct dict
+                        blackboard_id = int(blackboard['blackboard_id'])
+                        blackboard_agents = blackboard['agents']
+                    # TextContent with text attribute (JSON string)
+                    elif hasattr(blackboard, 'text'):
+                        try:
+                            parsed = json.loads(blackboard.text)
+                            # If parsed result is a list, take first element
+                            if isinstance(parsed, list):
+                                if parsed:
+                                    blackboard_id = int(parsed[0]['blackboard_id'])
+                                    blackboard_agents = parsed[0]['agents']
+                            else:
+                                blackboard_id = int(parsed['blackboard_id'])
+                                blackboard_agents = parsed['agents']
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+                            logger.error(f"Failed to parse blackboard JSON: {blackboard.text}, error: {e}")
+                            continue
+                    # Object with attributes
+                    elif hasattr(blackboard, 'blackboard_id'):
+                        blackboard_id = int(blackboard.blackboard_id)
+                        blackboard_agents = blackboard.agents
+                    else:
+                        logger.warning(f"Unknown blackboard format: {type(blackboard)}")
+                        continue
+                    
+                    # Skip if extraction failed
+                    if blackboard_id is None or blackboard_agents is None:
+                        logger.warning(f"Could not extract blackboard data from: {blackboard}")
+                        continue
                     
                     # Filter agents that are participants in THIS meeting AND this blackboard
-                    relevant_agents = [a for a in participants if a in blackboard['agents']]
+                    relevant_agents = [a for a in participants if a in blackboard_agents]
                     
                     if not relevant_agents:
                         continue
@@ -550,7 +782,43 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                             "meeting_intersections": meeting_intersections_for_bb,
                             "meeting_info": meeting_info_for_bb
                         })
-                        result = tool_result.data if hasattr(tool_result, 'data') else tool_result
+                        
+                        # Parse result (handle TextContent and other formats)
+                        result = None
+                        
+                        # Direct dict
+                        if isinstance(tool_result, dict):
+                            result = tool_result
+                        # Has content attribute (TextContent or similar)
+                        elif hasattr(tool_result, 'content'):
+                            content = tool_result.content
+                            # TextContent with text attribute (JSON string)
+                            if hasattr(content, 'text'):
+                                try:
+                                    result = json.loads(content.text)
+                                except json.JSONDecodeError:
+                                    result = {"status": "error", "message": "Invalid JSON response"}
+                            # Content is already a dict
+                            elif isinstance(content, dict):
+                                result = content
+                            # Content is a list (might contain TextContent items)
+                            elif isinstance(content, list):
+                                if content and hasattr(content[0], 'text'):
+                                    try:
+                                        result = json.loads(content[0].text)
+                                    except (json.JSONDecodeError, AttributeError):
+                                        result = {"status": "error", "message": "Failed to parse list content"}
+                                else:
+                                    result = {"status": "error", "message": f"Unknown list content: {type(content[0]) if content else 'empty'}"}
+                            else:
+                                logger.debug(f"Unknown content type: {type(content)}, value: {content}")
+                                result = {"status": "error", "message": f"Unknown content format: {type(content).__name__}"}
+                        # Has data attribute
+                        elif hasattr(tool_result, 'data'):
+                            result = tool_result.data
+                        # Fallback
+                        else:
+                            result = tool_result
                         
                         if isinstance(result, dict) and result.get("status") == "success":
                             logger.info(

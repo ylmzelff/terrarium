@@ -104,8 +104,8 @@ def format_availability_table(
         
         table_lines.append(f"Agent: {agent}")
         
-        # Create header row with slot numbers
-        slot_headers = [f"Slot {i+1}" for i in range(num_slots_per_day)]
+        # Create header row with slot numbers (0-indexed)
+        slot_headers = [f"Slot {i}" for i in range(num_slots_per_day)]
         header = "        | " + " | ".join(f"{s:^6}" for s in slot_headers) + " |"
         separator = "-" * len(header)
         
@@ -143,8 +143,8 @@ def format_availability_table(
             table_lines.append(f"Meeting: {title}")
             table_lines.append(f"Participants: {', '.join(participants)}")
             
-            # Create header row
-            slot_headers = [f"Slot {i+1}" for i in range(num_slots_per_day)]
+            # Create header row (0-indexed)
+            slot_headers = [f"Slot {i}" for i in range(num_slots_per_day)]
             header = "        | " + " | ".join(f"{s:^6}" for s in slot_headers) + " |"
             separator = "-" * len(header)
             

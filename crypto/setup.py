@@ -57,14 +57,16 @@ def find_gmp_paths():
 include_dirs, library_dirs = find_gmp_paths()
 libraries = ["gmp", "gmpxx"]
 
+import pybind11
+
 ext_modules = [
-    Pybind11Extension(
+    Extension(
         "pyot",
         sources=["ot_binding.cpp", "priority_ot.cpp"],
-        include_dirs=include_dirs,
+        include_dirs=include_dirs + [pybind11.get_include()],
         library_dirs=library_dirs,
         libraries=libraries,
-        extra_compile_args=["-std=c++14"],
+        extra_compile_args=["-std=c++14", "-O3"],
         language="c++",
     ),
 ]

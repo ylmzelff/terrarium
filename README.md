@@ -13,22 +13,28 @@ This repo is under active development :gear:, so please raise an issue for new f
 ## Features
 
 - **Blackboards (Communication Proxies)**: Append-only event/communication log which acts as a component of the agent's observation and communication with other agents.
-- **Two-Phase Communication Protocol**: The implemented communication protocol containes two phases, a (1) *planing phase* and an (2) *execution phase*. The planning phase enables communcation between agents to faciliate better action selection during the executation phase. During the executation phase, the agents take **actions** that affect their environment. This is done in a predefined sequential order to avoid environment simulation clashes.
+- **Two-Phase Communication Protocol**: The implemented communication protocol containes two phases, a (1) _planing phase_ and an (2) _execution phase_. The planning phase enables communcation between agents to faciliate better action selection during the executation phase. During the executation phase, the agents take **actions** that affect their environment. This is done in a predefined sequential order to avoid environment simulation clashes.
 - **MCP Servers**: We use MCP servers to provide easy integration with varying LLM client APIs while enabling easier configuration of environment and external tools.
 - **DCOP Environments**: DCOPs (Distributed Constraint Optimization Problems) have a **ground-truth solution** and a well-grounded evalution function, evaluating the actions taken by a set of agents. We implement DCOP environments from the [CoLLAB](https://openreview.net/pdf?id=372FjQy1cF) benchmark.
   - SmartGrid - A home agent's objecitve is to schedule appliance usage throughout the day without overworking the powergrid (Uses real-world home-meter data)
   - MeetingScheduling - A calendar agent is tasked with assigning meetings with other agents, trying to satisfy preferences and constraints with respect to other agents schedules (Uses real-world locations)
   - PersonalAssistant - An assistant agent chooses outfits for a human while meeting social norm preferences, the preferences of the human, and constrained outfit selection (Uses fully synthetic data)
-<!-- - **One Stochastic Game Environment (Trading)**: A simple trading environment where agents trade and buy items to maximize their personal cumulative inventory utility. Agents trade items (e.g., TV, phone, banana) and negotiate with each other given limited resources. This environment allows multi-step simulation with multiple evaluation steps. -->
+- **🆕 Production-Ready Graph API Integration**: MeetingScheduling environment supports dual-mode operation:
+  - **Simulation Mode** (Default): Controlled test data with guaranteed intersections - perfect for research and testing
+  - **Production Mode** (Optional): Real Outlook/Teams integration via Microsoft Graph API - fetch actual calendar availability and create Teams meetings
+  - See [GRAPH_API_INTEGRATION.md](GRAPH_API_INTEGRATION.md) for setup guide
+  <!-- - **One Stochastic Game Environment (Trading)**: A simple trading environment where agents trade and buy items to maximize their personal cumulative inventory utility. Agents trade items (e.g., TV, phone, banana) and negotiate with each other given limited resources. This environment allows multi-step simulation with multiple evaluation steps. -->
 
-## Documentation 
+## Documentation
 
-Use the following [documentation](https://aisec.cs.umass.edu/projects/terrarium/docs) for detailed instructions about on how to use the framework. 
+Use the following [documentation](https://aisec.cs.umass.edu/projects/terrarium/docs) for detailed instructions about on how to use the framework.
 
 Follow the quick guide provided below for basic testing.
 
 ## Quick Start
+
 Clone the repository and update submodules. A submodule exists at `external/CoLLAB` for a suite of external environments.
+
 ```bash
 git clone <repository-url> Terrarium
 cd Terrarium
@@ -36,16 +42,20 @@ git submodule update --init --recursive
 ```
 
 In this repo, we use [uv](https://docs.astral.sh/uv/) as our extremely fast package manager. If not already installed follow these [installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
+
 ```bash
 # Run this at the root directory .../Terrarium
 uv venv --python 3.11 .venv
 source .venv/bin/activate
 uv sync
 ```
+
 ---
+
 Terrarium enables two types of servicing: (1) API-based providers and (2) [vLLM](https://github.com/vllm-project/vllm) integration for open-source models.
 
 For API-based providers, we currently support OpenAI, Google, Anthropic, and [together.ai](https://api.together.ai/) models. Set your API keys in a .env file.
+
 ```bash
 # In a .env file at the root directory
 OPENAI_API_KEY=<your_key>
@@ -53,16 +63,21 @@ GOOGLE_API_KEY=<your_key>
 ANTHROPIC_API_KEY=<your_key>
 TOGETHER_API_KEY=<your_key>
 ```
+
 Next, set the model and provider you want to use at `llm.provider` and `llm.<provider>.model` in `examples/configs/<config>.yaml`.
 
 For vLLM servicing, simply set `llm.provider:"vllm"` and `llm.vllm.auto_start_server:true` in `examples/configs/<config>.yaml` for auto-startup and shutdown for a single run. If you require a persistent vLLM server, which is useful for using the same vLLM model for different configurations or environments without the costly startup time, then set `llm.vllm.persistent_server:true`. To kill all vLLM servers run `pkill -f vllm.entrypoints.openai.api_server`.
 
 ### Running a Multi-Agent Trajectory
+
 1. Start up the persistent MCP server once for tool calls and the blackboard server:
+
 ```bash
 python src/server.py
 ```
+
 2. Run a simulation using an execution script along with a config file:
+
 ```bash
 python examples/base_main.py --config <yaml_config_path>
 ```
@@ -71,11 +86,11 @@ python examples/base_main.py --config <yaml_config_path>
 
 Terrarium ships three reference attacks that exercise different points in the stack. Implementations live in `attack_module/attack_modules.py` and can be mixed into any simulation via the provided runners.
 
-| Attack | What it targets | Entry point | Payload config |
-| --- | --- | --- | --- |
-| Agent poisoning | Replaces every `post_message` payload from the compromised agent before it reaches the blackboard. | `examples/attack_main.py --attack_type agent_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
-| Context overflow | Appends a large filler block to agent messages to force downstream context truncation. | `examples/attack_main.py --attack_type context_overflow` | `examples/configs/attack_config.yaml` (`header`, `filler_token`, `repeat`, `max_chars`) |
-| Communication protocol poisoning | Injects malicious system messages into every blackboard via the MCP layer. | `examples/attack_main.py --communication_protocol_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`) |
+| Attack                           | What it targets                                                                                    | Entry point                                                  | Payload config                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Agent poisoning                  | Replaces every `post_message` payload from the compromised agent before it reaches the blackboard. | `examples/attack_main.py --attack_type agent_poisoning`      | `examples/configs/attack_config.yaml` (`poisoning_string`)                              |
+| Context overflow                 | Appends a large filler block to agent messages to force downstream context truncation.             | `examples/attack_main.py --attack_type context_overflow`     | `examples/configs/attack_config.yaml` (`header`, `filler_token`, `repeat`, `max_chars`) |
+| Communication protocol poisoning | Injects malicious system messages into every blackboard via the MCP layer.                         | `examples/attack_main.py --communication_protocol_poisoning` | `examples/configs/attack_config.yaml` (`poisoning_string`)                              |
 
 ### Running agent-side attacks
 
@@ -96,16 +111,18 @@ python examples/attack_main.py \
 ```
 
 ## Quick Tips
+
 - When working with Terrarium, use sublass definitions (e.g., A2ACommunicationProtocol, EvilAgent) of the base module classes (e.g., CommunicationProtocol, Agent) rather than directly changing the base module classes.
 - When creating new environments, ensure they inherit the AbstractEnvironment class and all methods are properly defined.
 - Keep in mind some models (e.g., gpt-4.1-nano) are not capable enough of utilizing tools to take actions in the environment, so track the completion rate such as `Meeting completion: 15/15 (100.0%)` for MeetingScheduling.
 
 ## vLLM Provider (Open-Source Models)
+
 1. Install vLLM (`pip install vllm`) and make sure CUDA is available.
 2. Set `llm.provider: "vllm"` in your config and describe the single server under `llm.vllm`.
 3. All agents share the one configured vLLM model; advanced routing is disabled in this setup.
 
-Best *small* model for successful tool use tested so far: Qwen/Qwen2.5-7B-Instruct. We have not tested on large >70B open-source models, but use use the [Berkeley Function-Calling Leaderboard - BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) as a reference.
+Best _small_ model for successful tool use tested so far: Qwen/Qwen2.5-7B-Instruct. We have not tested on large >70B open-source models, but use use the [Berkeley Function-Calling Leaderboard - BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) as a reference.
 
 Minimal example:
 
@@ -157,10 +174,10 @@ Consolidates runs and logs into a static dashboard for easier navigation:
 
 To standardize tool usage among different model providers, we employ an MCP server using FastMCP. Each environment has their own set of MCP tools that are readily available to the agent with the functionality of permitting certain tools by the communication protocol. Some examples of environment tools are MeetingScheduling -> attend_meeting(.), PersonalAssistant -> choose_outfit(.), and SmartGrid -> assign_source(.).
 
-
 ## Logging
 
 Terrarium incorporates a set of loggers for prompts, tool usage, agent trajectories, and blackboards. All loggers are defined in `src/logger.py`, conisting of
+
 - BlackboardLogger -- Logs events for all existing blackboards in human-readable format (Useful for tracking conversations between agents and tool calls)
 - ToolCallLogger -- Tracks the tool called, success, and duration for each agent (Useful for debugging tool implementations)
 - PromptLogger -- Shows exact system and user prompts used (Useful for debugging F-string formatted prompts)
@@ -169,6 +186,7 @@ Terrarium incorporates a set of loggers for prompts, tool usage, agent trajector
 All logs are saved to `logs/<environment>/<tag_model>/<run_timestamp>/seed_<seed>/`, including a snapshot of the config used for that run.
 
 ## TODOs
+
 - [x] !! Get parallelized simulations working on multiple seeds
 - [x] !! Implement vLLM client
 - [ ] !! Optimize parallel inference for fast large agent experiments
@@ -178,6 +196,7 @@ All logs are saved to `logs/<environment>/<tag_model>/<run_timestamp>/seed_<seed
 - [ ] Add tests directory
 
 ## Paper Citation
+
 ```bibtex
 @article{nakamura2025terrarium,
   title={Terrarium: Revisiting the Blackboard for Multi-Agent Safety, Privacy, and Security Studies},

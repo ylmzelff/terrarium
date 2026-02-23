@@ -9,6 +9,37 @@ simulation:
 environment:
   name: MeetingSchedulingEnvironment
 
+  # ========== PRODUCTION MODE TOGGLE ==========
+  # use_real_calendars: Use real Outlook/Teams via Microsoft Graph API
+  # false = Simulation mode (default, no Azure setup needed)
+  # true = Production mode (requires Azure App Registration + M365 account)
+  use_real_calendars: false # ✅ PRODUCTION MODE (Graph API)
+
+  # ========== MICROSOFT GRAPH API CONFIGURATION (Optional) ==========
+  # Only used if use_real_calendars=true
+  # Requires Azure App Registration: https://portal.azure.com
+  # Free options:
+  # - University M365 account (if your school provides it)
+  # - M365 Developer Program: https://developer.microsoft.com/microsoft-365/dev-program (90 days free)
+  graph_api:
+    # Environment variables (NEVER commit secrets to git!)
+    # Set these in your shell:
+    #   $env:AZURE_CLIENT_ID="your-client-id"
+    #   $env:AZURE_CLIENT_SECRET="your-secret-value"
+    #   $env:AZURE_TENANT_ID="your-tenant-id"
+    client_id: "${AZURE_CLIENT_ID}"
+    client_secret: "${AZURE_CLIENT_SECRET}"
+    tenant_id: "${AZURE_TENANT_ID}"
+
+    # Timezone for calendar operations
+    timezone: "Europe/Istanbul" # Adjust to your timezone
+
+    # Map simulation agent names to real email addresses
+    # Example: AgentA uses real Outlook calendar of user1@university.edu
+    agent_emails:
+      AgentA: "user1@example.com" # Replace with real email
+      AgentB: "user2@example.com" # Replace with real email
+
   # ========== INTERSECTION CONTROL ==========
   # intersections: Number of GUARANTEED common slots where ALL agents are available
   # Example: intersections=3 means exactly 3 slots where both Agent A and Agent B are free
@@ -18,9 +49,11 @@ environment:
   num_meetings: 1 # Number of meetings to schedule
 
   # ========== AVAILABILITY TABLE CONFIGURATION ==========
-  num_days: 1 # Number of days to show in availability table
-  slots_per_day: 6 # Number of time slots per day
-  availability_rate: 0.4 # Probability that each agent is available for NON-INTERSECTION slots (40% default)
+  # Only used in simulation mode (use_real_calendars=false)
+  num_days: 5 # Number of days to show in availability table
+  slots_per_day: 24 # Number of time slots per day
+  availability_rate: 0.4 # %40 ihtimalle ek slotlar available (her agent FARKLI olacak!)
+  # availability_rate: 0.0 # 0.0 = SADECE intersection slotları (test için)
 communication_network:
   # Topology used to create blackboards
   # Options: complete | path | star | random
@@ -41,24 +74,45 @@ llm:
   # Modeller otomatik olarak Hugging Face Hub'dan indirilir
   # Tool calling için JSON parsing kullanılır (model'in structured output vermesi gerekir)
   huggingface:
-    # Tool calling için en iyi modeller (güç sırasına göre):
+    # ============================================
+    # 🎯 EN GÜÇLÜ MODELLER (OpenAI GPT-4 Seviyesi)
+    # ============================================
+    # 🔥 "Qwen/Qwen2.5-72B-Instruct" - 72B - GPT-4'e en yakın! (~72GB VRAM, quantization şart)
+    # 🔥 "meta-llama/Llama-3.3-70B-Instruct" - 70B - En yeni Llama, çok güçlü (~70GB VRAM)
+    # 🔥 "mistralai/Mixtral-8x22B-Instruct-v0.1" - 176B total (MoE), ultra güçlü (~90GB VRAM)
+    # 🔥 "Qwen/QwQ-32B-Preview" - 32B - Reasoning'de mükemmel, math/logic için ideal (~32GB VRAM)
 
-    # 🚀 COLAB T4 GPU İÇİN EN İYİ SEÇİM:
-    model: "Qwen/Qwen2.5-7B-Instruct" # 7B - Mükemmel denge (ÖNERİLEN!)
+    # ============================================
+    # 🚀 BALANCED - COLAB T4 GPU İÇİN EN İYİ
+    # ============================================
+    model: "Qwen/Qwen2.5-7B-Instruct" # 7B - Mükemmel denge, tool calling mükemmel (ÖNERİLEN!)
 
-    # Diğer güçlü seçenekler:
-    # ⭐⭐⭐ "Qwen/Qwen2.5-14B-Instruct" - 14B - Çok güçlü (Colab'da biraz yavaş ama çalışır)
-    # ⭐⭐⭐ "Qwen/Qwen2.5-32B-Instruct" - 32B - En güçlü (Quantization gerekebilir)
-    # ⭐⭐ "meta-llama/Llama-3.1-8B-Instruct" - 8B - Meta'nın modeli
-    # ⭐⭐ "mistralai/Mistral-7B-Instruct-v0.3" - 7B - Popüler, iyi
-    # ⭐ "Qwen/Qwen2.5-3B-Instruct" - 3B - Hızlı ama daha az güçlü
-    # ⭐ "Qwen/Qwen2.5-1.5B-Instruct" - 1.5B - En hızlı, en hafif
+    # ============================================
+    # 💪 GÜÇLÜ MODELLER (GPT-3.5+ Seviyesi)
+    # ============================================
+    # ⭐⭐⭐⭐ "Qwen/Qwen2.5-32B-Instruct" - 32B - Çok güçlü, GPT-3.5 Turbo'dan iyi (~32GB VRAM, quantization gerekebilir)
+    # ⭐⭐⭐⭐ "meta-llama/Llama-3.1-70B-Instruct" - 70B - Meta'nın en güçlüsü (~70GB VRAM)
+    # ⭐⭐⭐ "Qwen/Qwen2.5-14B-Instruct" - 14B - Çok iyi, Colab T4'te sınırda (~14GB VRAM)
+    # ⭐⭐⭐ "mistralai/Mixtral-8x7B-Instruct-v0.1" - 47B total (MoE), çok güçlü (~24GB VRAM)
+    # ⭐⭐ "meta-llama/Llama-3.1-8B-Instruct" - 8B - Meta'nın 8B versiyonu (~8GB VRAM)
+    # ⭐⭐ "mistralai/Mistral-7B-Instruct-v0.3" - 7B - Popüler, iyi (~7GB VRAM)
 
-    # MODEL BOYUTU REHBERİ:
-    # 1.5B-3B: ~1-3GB VRAM, çok hızlı, temel tasklar için yeterli
-    # 7B: ~7-8GB VRAM, mükemmel denge, çoğu task için ideal ⭐
-    # 14B: ~14-16GB VRAM, çok iyi kalite, Colab T4'te sınırda
-    # 32B+: ~32GB+ VRAM, en iyi kalite, quantization gerekir
+    # ============================================
+    # ⚡ HIZLI MODELLER (GPT-3.5 Mini Seviyesi)
+    # ============================================
+    # ⭐ "Qwen/Qwen2.5-3B-Instruct" - 3B - Hızlı, basic tasks için yeterli (~3GB VRAM)
+    # ⭐ "Qwen/Qwen2.5-1.5B-Instruct" - 1.5B - En hızlı, en hafif (~2GB VRAM)
+
+    # ============================================
+    # 📊 VRAM GEREKSİNİMLERİ (FP16 ile)
+    # ============================================
+    # 1.5B-3B:    ~2-4GB    | Colab free ✅ | CPU ✅ | Tool calling: ⭐⭐
+    # 7B-8B:      ~7-10GB   | Colab T4 ✅   | CPU ❌ | Tool calling: ⭐⭐⭐⭐
+    # 14B:        ~14-18GB  | Colab T4 ⚠️   | CPU ❌ | Tool calling: ⭐⭐⭐⭐⭐
+    # 32B:        ~32-40GB  | A100 40GB ✅  | CPU ❌ | Tool calling: ⭐⭐⭐⭐⭐
+    # 70B:        ~70-90GB  | A100 80GB ✅  | CPU ❌ | Tool calling: ⭐⭐⭐⭐⭐
+    #
+    # 💡 Quantization ile daha az VRAM: 4-bit quantization ~75% VRAM tasarrufu
 
     device: "auto" # "auto" (GPU varsa kullan), "cuda" (GPU zorla), "cpu" (CPU zorla)
     trust_remote_code: true
