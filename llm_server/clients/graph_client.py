@@ -60,17 +60,9 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from functools import wraps
 
-try:
-    from msal import PublicClientApplication, SerializableTokenCache
-    import requests
-    import pytz
-    GRAPH_AVAILABLE = True
-except ImportError:
-    GRAPH_AVAILABLE = False
-    logging.warning(
-        "Microsoft Graph API dependencies not installed. "
-        "Run: pip install msal requests pytz"
-    )
+# msal, requests and pytz are imported lazily inside GraphAPIClient.__init__
+# so that the check always reflects the current installed state of packages,
+# even in long-running server processes where packages may be installed after startup.
 
 
 logger = logging.getLogger(__name__)
@@ -169,24 +161,30 @@ class GraphAPIClient:
                         device flow is always triggered — same behaviour as test_graph_api.py.
                         Set to False to silently reuse cached tokens across runs.
         """
-        if not GRAPH_AVAILABLE:
+        # Lazy import — checked at instantiation so package installs after server
+        # startup are picked up without restarting the process.
+        try:
+            from msal import PublicClientApplication, SerializableTokenCache
+            import requests   # noqa: F401 (side-effect: validate install)
+            import pytz       # noqa: F401
+        except ImportError as exc:
             raise ImportError(
                 "Microsoft Graph API dependencies not installed. "
                 "Run: pip install msal requests pytz"
-            )
-        
+            ) from exc
+
         self.client_id = client_id
         self.tenant_id = tenant_id
         self.timezone = timezone
         self.token_cache_path = token_cache_path
         self.fresh_auth = fresh_auth
-        
+
         # Initialize Token Cache
         self.cache = SerializableTokenCache()
         if os.path.exists(self.token_cache_path):
             with open(self.token_cache_path, "r") as f:
                 self.cache.deserialize(f.read())
-        
+
         # Initialize MSAL app (Public Client for Device Code flow)
         # Always use 'common' authority so personal Microsoft accounts (including
         # Gmail-linked Outlook accounts) can authenticate. A specific tenant_id
@@ -197,6 +195,7 @@ class GraphAPIClient:
             authority=authority_url,
             token_cache=self.cache
         )
+
         
         # Mirror test_graph_api.py: remove all cached accounts so device flow
         # is always triggered for a fresh interactive sign-in.
@@ -720,9 +719,16 @@ class GraphAPIClient:
 
             client = GraphAPIClient.from_yaml(cfg)
         """
-        # Support both flat config and nested environment config
-        env_cfg: dict = yaml_config.get("environment", yaml_config)
-        graph_cfg: dict = env_cfg.get("graph_api", {})
+        # Support multiple call patterns:
+        #   1. full YAML config: {"simulation": ..., "environment": {"graph_api": ...}, ...}
+        #   2. env_state dict:   {"graph_api": {...}, "num_days": 5, ...}
+        #   3. flat config:      {"graph_api": {...}}
+        graph_cfg: dict = (
+            yaml_config.get("graph_api")                                   # flat / env_state
+            or yaml_config.get("environment", {}).get("graph_api")         # nested full config
+            or {}
+        )
+
 
         # --- credentials: YAML first, env-var fallback ---
         client_id = graph_cfg.get("client_id") or os.getenv("AZURE_CLIENT_ID")
