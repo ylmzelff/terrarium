@@ -22,18 +22,20 @@ environment_tools = None
 # Initialize later
 blackboard_logger: Optional[BlackboardLogger] = None
 
-def set_environment_tools(environment_name: str):
+def set_environment_tools(environment_name: str, env=None):
     """
     Dynamically load and set environment-specific tools.
 
     Args:
-        environment_name: Canonical environment identifier (prefer passing environment.__class__.__name__).
+        environment_name: Canonical environment identifier.
+        env: Live environment instance (optional). When provided, the tools object
+             receives a back-reference so agentic tools can call env methods directly.
     """
     global environment_tools
 
     if environment_name == "MeetingSchedulingEnvironment":
         from envs.dcops.meeting_scheduling import MeetingSchedulingTools
-        environment_tools = MeetingSchedulingTools(megaboard)
+        environment_tools = MeetingSchedulingTools(megaboard, env=env)
     else:
         raise ValueError(
             f"Unknown environment: {environment_name}. Supported: "

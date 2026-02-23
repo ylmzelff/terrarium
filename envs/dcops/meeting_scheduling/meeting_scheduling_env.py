@@ -133,29 +133,28 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
         # Availability table configuration (from config or defaults)
         self.num_days = self.env_config.get("num_days", 1)
-        self.slots_per_day = self.env_config.get("slots_per_day", 12)
-        
-        # Generate availability for each meeting
-        self.meeting_availabilities = {}  # meeting_id -> {agent_name -> [0,1,0,...]}
-        for meeting in self.meetings:
-            self.meeting_availabilities[meeting.meeting_id] = self._generate_availability_for_meeting(
-                meeting.participants
-            )
-        
+        self.slots_per_day = self.env_config.get("slots_per_day", 24)
+
+        # ── Agentic mode: LLM agents fetch their own calendars via tools ──
+        # These are populated at runtime when agents call submit_availability_array.
+        self.meeting_availabilities: Dict[str, Dict[str, List[int]]] = {}
+        # Tracks which agents have submitted arrays per meeting:
+        # { meeting_id: { agent_name: [0,1,...] } }
+        self._submitted_arrays: Dict[str, Dict[str, List[int]]] = {}
+
         # Cache for meeting intersections (computed once via OT, reused everywhere)
-        self._meeting_intersections_cache = None
+        self._meeting_intersections_cache: Optional[Dict] = None
 
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
         logger.info("Total meetings to schedule: %s", len(self.meetings))
-        logger.info("Availability table: %d days x %d slots/day", self.num_days, self.slots_per_day)
+        logger.info("Agentic mode: LLM agents will fetch their own calendars via tools.")
+        logger.info("Slot config: %d days × %d slots/day = %d total",
+                    self.num_days, self.slots_per_day, self.num_days * self.slots_per_day)
 
     async def async_init(self):
         await super().async_init()
-        # Log availability table at initialization, BEFORE any planning rounds start
-        # This ensures the table appears in agent prompts from the first round
-        logger.info("🚀 Initializing availability tables...")
-        await self._async_log_availability_table()
+        logger.info("🚀 Agentic mode ready — agents will fetch calendars via fetch_my_calendar tool.")
 
     def build_agent_context(self, agent_name: str, phase: str, iteration: int, **kwargs) -> Dict[str, Any]:
         """
@@ -519,6 +518,206 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             slots.append(AvailabilityConstants.BUSY)
         
         return slots[:total_slots]  # Trim if too many
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Agentic Tools — called by MeetingSchedulingTools handlers
+    # ─────────────────────────────────────────────────────────────────────
+
+    def fetch_calendar_for_agent(self, agent_name: str, meeting_id: str) -> Dict[str, Any]:
+        """
+        Called by the fetch_my_calendar tool.
+
+        Fetches the calling agent's Outlook/Teams calendar events via Graph API and
+        returns them together with slot configuration so the LLM can build its own
+        binary availability array.
+
+        Returns a dict the LLM receives as tool output:
+          {
+            "events":      [ {"subject": ..., "start": ..., "end": ..., "showAs": ...}, ... ],
+            "slot_info":   { "total_slots": 120, "slot_duration_minutes": 60, ... },
+            "instructions": "..."
+          }
+        """
+        from datetime import datetime, timedelta
+
+        graph_config = self.env_config.get("graph_api", {})
+        agent_emails = graph_config.get("agent_emails", {})
+        email = agent_emails.get(agent_name)
+
+        if not email:
+            return {
+                "error": f"No email configured for agent '{agent_name}'. "
+                         f"Check graph_api.agent_emails in the config."
+            }
+
+        # Lazy-init Graph API client
+        if not hasattr(self, "_graph_client"):
+            try:
+                from llm_server.clients.graph_client import GraphAPIClient
+                tz = graph_config.get("timezone", "UTC")
+                self._graph_client = GraphAPIClient.from_env(timezone=tz)
+                logger.info("✅ Graph API client initialised for agentic tool flow.")
+            except Exception as exc:
+                logger.exception("Failed to initialise Graph API client: %s", exc)
+                return {"error": f"Graph API client initialisation failed: {exc}"}
+
+        total_slots = self.num_days * self.slots_per_day
+        start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = start_dt + timedelta(days=self.num_days)
+
+        try:
+            logger.info("📅 [%s] Fetching calendar for %s (%s → %s)", agent_name, email, start_dt.date(), end_dt.date())
+            raw_slots = self._graph_client.get_availability(
+                email=email,
+                start_datetime=start_dt,
+                end_datetime=end_dt,
+                interval_minutes=60,
+            )
+        except Exception as exc:
+            logger.exception("Graph API call failed for %s: %s", agent_name, exc)
+            return {"error": f"Calendar fetch failed: {exc}"}
+
+        # Convert slots list to a simple event list the LLM can reason about
+        events = [
+            {
+                "slot_index": i,
+                "start":  s["start"],
+                "end":    s["end"],
+                "status": s["status"],   # "free" | "busy"
+            }
+            for i, s in enumerate(raw_slots)
+        ]
+
+        logger.info("📋 [%s] Returned %d slots (%d busy) for meeting %s",
+                    agent_name,
+                    len(events),
+                    sum(1 for e in events if e["status"] == "busy"),
+                    meeting_id)
+
+        return {
+            "meeting_id": meeting_id,
+            "agent":      agent_name,
+            "events":     events,
+            "slot_info": {
+                "total_slots":           total_slots,
+                "slots_per_day":         self.slots_per_day,
+                "num_days":              self.num_days,
+                "slot_duration_minutes": 60,
+                "date_range":            f"{start_dt.date()} to {(end_dt - timedelta(days=1)).date()}",
+                "work_hours":            "09:00–18:00 (slots outside this range are always busy)",
+            },
+            "instructions": (
+                "Build a binary availability array of length "
+                f"{total_slots} (= {self.num_days} days × {self.slots_per_day} slots/day). "
+                "Rules:\n"
+                "  • 1 = you are FREE at that slot\n"
+                "  • 0 = you are BUSY at that slot\n"
+                "  • Slots outside 09:00–18:00 work hours → always 0\n"
+                "  • Slots where status='busy' → 0\n"
+                "  • Slots where status='free' AND within work hours → 1\n"
+                "After building the array, call submit_availability_array("
+                f"meeting_id='{meeting_id}', availability=[...]) with your array."
+            ),
+        }
+
+    def submit_availability_array(
+        self,
+        agent_name: str,
+        meeting_id: str,
+        availability: List[int],
+        phase: Optional[str] = None,
+        iteration: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Called by the submit_availability_array tool.
+
+        Stores the agent's binary availability.  When ALL participants of the meeting
+        have submitted their arrays the OT protocol is triggered automatically and the
+        intersection is written to every relevant blackboard.
+        """
+        from src.availability import AvailabilityConstants
+
+        total_slots = self.num_days * self.slots_per_day
+
+        # ── Validate ──────────────────────────────────────────────────────
+        if len(availability) != total_slots:
+            return {
+                "status": "error",
+                "reason": (
+                    f"Expected {total_slots} values ({self.num_days} days × {self.slots_per_day} slots/day), "
+                    f"got {len(availability)}."
+                ),
+            }
+
+        # ── Store the submitted array ──────────────────────────────────────
+        if meeting_id not in self._submitted_arrays:
+            self._submitted_arrays[meeting_id] = {}
+        self._submitted_arrays[meeting_id][agent_name] = availability
+
+        free_count = sum(availability)
+        logger.info(
+            "📥 Availability submitted | meeting=%s | agent=%s | free=%d/%d",
+            meeting_id, agent_name, free_count, total_slots,
+        )
+
+        # Find the meeting's participants
+        meeting_obj  = next((m for m in self.meetings if m.meeting_id == meeting_id), None)
+        participants = meeting_obj.participants if meeting_obj else list(self._submitted_arrays[meeting_id].keys())
+        submitted    = self._submitted_arrays[meeting_id]
+        waiting_for  = [p for p in participants if p not in submitted]
+
+        if waiting_for:
+            return {
+                "status":      "received",
+                "meeting_id":  meeting_id,
+                "agent":       agent_name,
+                "free_slots":  free_count,
+                "waiting_for": waiting_for,
+                "message":     f"Array saved. Waiting for {waiting_for} to also submit.",
+            }
+
+        # ── All participants submitted → run OT ───────────────────────────
+        logger.info("🔒 All participants submitted → running OT for meeting %s", meeting_id)
+
+        # Populate meeting_availabilities so existing OT/blackboard code works unchanged
+        self.meeting_availabilities[meeting_id] = {
+            p: submitted[p] for p in participants
+        }
+        # Invalidate intersection cache so OT re-runs with new data
+        self._meeting_intersections_cache = None
+
+        try:
+            intersections = self._generate_meeting_intersections()
+        except Exception as exc:
+            logger.exception("OT protocol failed for meeting %s: %s", meeting_id, exc)
+            return {"status": "error", "reason": f"OT protocol failed: {exc}"}
+
+        intersection = intersections.get(meeting_id, [])
+        common_indices = [i for i, v in enumerate(intersection) if v == AvailabilityConstants.AVAILABLE]
+
+        # Write intersection to all relevant blackboards
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(self._async_log_availability_table())
+            else:
+                loop.run_until_complete(self._async_log_availability_table())
+        except Exception as exc:
+            logger.warning("Could not write availability table to blackboard: %s", exc)
+
+        return {
+            "status":         "ot_complete",
+            "meeting_id":     meeting_id,
+            "common_slots":   len(common_indices),
+            "intersection":   intersection,
+            "common_indices": common_indices,
+            "message": (
+                f"OT complete. {len(common_indices)} common slots found. "
+                "The intersection has been posted to the shared blackboard. "
+                "Coordinate with the other agent to select the EARLIEST common slot (smallest index)."
+            ),
+        }
 
 
     def _generate_availability_slots(self) -> Dict[str, List[int]]:
@@ -945,29 +1144,73 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         total_slots = self.num_days * self.slots_per_day
         for meeting in self.instance.meetings:
             meetings[meeting.meeting_id] = {
-                "title": meeting.title,
+                "title":        meeting.title,
                 "participants": list(meeting.participants),
-                "start": 0,
-                "end": total_slots,
+                "start":        0,
+                "end":          total_slots,
                 "meeting_type": "soft",
             }
 
+        # Include graph_api config so tools can use it without a direct env reference
+        graph_api = self.env_config.get("graph_api", {})
+
         return {
-            "meetings": meetings,
-            "attendance": self.assignment.copy(),
-            "agent_names": self.agent_names.copy(),
+            "meetings":     meetings,
+            "attendance":   self.assignment.copy(),
+            "agent_names":  self.agent_names.copy(),
+            "num_days":     self.num_days,
+            "slots_per_day": self.slots_per_day,
+            "graph_api":    graph_api,
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:
         """
         Apply state updates from tool execution.
 
-        Args:
-            state_updates: Dictionary with state updates to apply
+        Handles:
+          - attendance: agent → meeting slot assignments (from attend_meeting)
+          - submitted_arrays: agent binary availability arrays (from submit_availability_array)
+            When all participants of a meeting have submitted, OT is triggered automatically.
         """
-        # Apply attendance updates (UPDATE, don't replace!)
+        # ── Attendance updates (attend_meeting) ───────────────────────────
         if "attendance" in state_updates:
             self.assignment.update(state_updates["attendance"])
+
+        # ── Submitted availability arrays (submit_availability_array) ─────
+        if "submitted_arrays" in state_updates:
+            incoming = state_updates["submitted_arrays"]
+            # incoming = { meeting_id: { agent_name: [0, 1, ...] } }
+            for meeting_id, agent_arrays in incoming.items():
+                if meeting_id not in self._submitted_arrays:
+                    self._submitted_arrays[meeting_id] = {}
+                self._submitted_arrays[meeting_id].update(agent_arrays)
+
+                # Check if all participants have submitted
+                meeting_obj  = next((m for m in self.meetings if m.meeting_id == meeting_id), None)
+                participants = meeting_obj.participants if meeting_obj else list(agent_arrays.keys())
+                submitted    = self._submitted_arrays[meeting_id]
+                all_done     = all(p in submitted for p in participants)
+
+                if all_done and meeting_id not in self.meeting_availabilities:
+                    logger.info("🔒 All arrays received for %s → running OT", meeting_id)
+                    self.meeting_availabilities[meeting_id] = {p: submitted[p] for p in participants}
+                    self._meeting_intersections_cache = None  # force OT re-run
+
+                    try:
+                        self._generate_meeting_intersections()
+                        logger.info("✅ OT complete for %s → writing to blackboard", meeting_id)
+                        # Schedule async blackboard write
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.ensure_future(self._async_log_availability_table())
+                            else:
+                                loop.run_until_complete(self._async_log_availability_table())
+                        except Exception as exc:
+                            logger.warning("Could not write availability table to blackboard: %s", exc)
+                    except Exception as exc:
+                        logger.error("❌ OT protocol failed for %s: %s", meeting_id, exc)
 
     def post_tool_execution_callback(self, state_updates: Dict[str, Any], response: Dict[str, Any]) -> None:
         """

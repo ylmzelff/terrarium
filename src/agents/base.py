@@ -134,9 +134,12 @@ class BaseAgent:
         assert self.current_agent_name is not None, "Agent context not set - call set_meta_context first"
         assert self.current_phase is not None, "Agent context not set - call set_meta_context first"
 
+        logger.info("═" * 70)
+        logger.info(f"🔧 TOOL CALL | {self.current_agent_name} | Phase: {self.current_phase} | Tool: {tool_name}")
+        logger.info(f"   Argümanlar: {tool_arguments}")
+
         result: Dict[str, Any] = {"error": "Unknown error"}
         try:
-            # NOTE: Depending on the communication protocol implementation, this logic may have to change.
             env_name = self.environment_name or ""
 
             available_env_tools = {
@@ -172,6 +175,10 @@ class BaseAgent:
             result = {"error": error_msg}
             logger.exception(error_msg)
         finally:
+            duration_ms = (time.time() - start_time) * 1000
+            result_preview = str(result)[:300] + "..." if len(str(result)) > 300 else str(result)
+            logger.info(f"   ✅ Sonuç ({duration_ms:.0f}ms): {result_preview}")
+            logger.info("═" * 70)
             self._log_tool_call(tool_name, tool_arguments, result, start_time)
 
         return result
@@ -253,22 +260,41 @@ class BaseAgent:
                 "[ERROR] tool_set is empty. Agents are required to have access to tools for tool-based execution."
             )
         params = self._build_generation_params(tool_set=tool_set)
-        # Get system and user prompt into Reponses API format
-        # TODO: Add functions to abstract client class such as init_context()
         context = self.client.init_context(system_prompt, user_prompt)
         total_tools_executed = 0
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        # Get a response and update context for next conversation step
-        # response object will have tool calls embedded inside and text response
+
+        # ── LLM ÇAĞRI LOGU ─────────────────────────────────────────────────
+        logger.info("▓" * 70)
+        logger.info(f"🤖 LLM ÇAĞRI | Agent: {self.current_agent_name} | Phase: {self.current_phase} | Iter: {self.current_iteration}")
+        logger.info(f"   Model     : {self.model_name}")
+        logger.info(f"   Araçlar   : {[t.get('function',{}).get('name') for t in tool_set]}")
+        logger.info("── SYSTEM PROMPT ──")
+        for line in system_prompt.splitlines():
+            logger.info(f"   {line}")
+        logger.info("── USER PROMPT ──")
+        for line in user_prompt.splitlines():
+            logger.info(f"   {line}")
+        logger.info("▓" * 70)
+        # ────────────────────────────────────────────────────────────────────
+
         response, response_str = self.client.generate_response(input=context, params=params)
         total_usage = self.client.get_usage(response, total_usage)
         current_response = response
+
+        logger.info("▓" * 70)
+        logger.info(f"💬 LLM YANIT (Adım 1) | {self.current_agent_name}")
+        resp_preview = (response_str or "")[:800]
+        for line in resp_preview.splitlines():
+            logger.info(f"   {line}")
+        if len(response_str or "") > 800:
+            logger.info("   ... (yanıt kesildi, 800 karakter gösterildi)")
+        logger.info("▓" * 70)
 
         trajectory_dict: Dict[str, Any] = {}
         conversation_steps = 1
 
         for step in range(self.max_conversation_steps):
-            # Process tool calls and extract content
             tool_calls_executed, context, step_tools = await self.client.process_tool_calls(
                 current_response,
                 context,
@@ -277,23 +303,29 @@ class BaseAgent:
             total_tools_executed += tool_calls_executed
 
             if step_tools:
-                # For logging purposes
                 trajectory_dict[f"step_{step + 1}"] = {"tools": step_tools}
+                logger.info(f"   ↳ Adım {step+1}'de {tool_calls_executed} araç çağrıldı: {[t.get('name') for t in step_tools]}")
 
-            # Heuristic: No tool calls => we're done.
             if tool_calls_executed == 0:
+                logger.info(f"   ✅ Araç çağrısı yok — konuşma tamamlandı (toplam {conversation_steps} adım)")
                 break
 
-            # Reached the max number of model calls allowed.
             if step >= self.max_conversation_steps - 1:
                 break
 
-            # Continue the conversation using the accumulated context
             try:
                 response, response_str = self.client.generate_response(input=context, params=params)
                 total_usage = self.client.get_usage(response, total_usage)
                 current_response = response
                 conversation_steps += 1
+
+                logger.info("▓" * 70)
+                logger.info(f"💬 LLM YANIT (Adım {conversation_steps}) | {self.current_agent_name}")
+                resp_preview = (response_str or "")[:600]
+                for line in resp_preview.splitlines():
+                    logger.info(f"   {line}")
+                logger.info("▓" * 70)
+
             except Exception as e:
                 logger.exception("Failed to continue conversation at step %s: %s", step + 1, e)
                 self._log_trajectory(trajectory_dict)
@@ -313,6 +345,8 @@ class BaseAgent:
                 }
 
         self._log_trajectory(trajectory_dict)
+
+        logger.info(f"✅ {self.current_agent_name} tamamlandı | Toplam araç: {total_tools_executed} | Adım: {conversation_steps}")
 
         return {
             "response": response_str,

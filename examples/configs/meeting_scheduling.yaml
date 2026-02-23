@@ -13,7 +13,7 @@ environment:
   # use_real_calendars: Use real Outlook/Teams via Microsoft Graph API
   # false = Simulation mode (default, no Azure setup needed)
   # true = Production mode (requires Azure App Registration + M365 account)
-  use_real_calendars: false # ✅ PRODUCTION MODE (Graph API)
+  use_real_calendars: true # ✅ PRODUCTION MODE (Graph API)
 
   # ========== MICROSOFT GRAPH API CONFIGURATION (Optional) ==========
   # Only used if use_real_calendars=true
@@ -23,13 +23,15 @@ environment:
   # - M365 Developer Program: https://developer.microsoft.com/microsoft-365/dev-program (90 days free)
   graph_api:
     # Environment variables (NEVER commit secrets to git!)
-    # Set these in your shell:
-    #   $env:AZURE_CLIENT_ID="your-client-id"
-    #   $env:AZURE_CLIENT_SECRET="your-secret-value"
-    #   $env:AZURE_TENANT_ID="your-tenant-id"
-    client_id: "${AZURE_CLIENT_ID}"
-    client_secret: "${AZURE_CLIENT_SECRET}"
-    tenant_id: "${AZURE_TENANT_ID}"
+    # Set these in your .env file or shell before running:
+    #   AZURE_CLIENT_ID=your-client-id
+    #   AZURE_CLIENT_SECRET=your-secret-value
+    #   AZURE_TENANT_ID=your-tenant-id
+    # GraphAPIClient.from_env() reads them automatically.
+    client_id: ""       # Read from AZURE_CLIENT_ID env var
+    client_secret: ""   # Read from AZURE_CLIENT_SECRET env var
+    tenant_id: ""       # Read from AZURE_TENANT_ID env var
+
 
     # Timezone for calendar operations
     timezone: "Europe/Istanbul" # Adjust to your timezone
@@ -37,8 +39,8 @@ environment:
     # Map simulation agent names to real email addresses
     # Example: AgentA uses real Outlook calendar of user1@university.edu
     agent_emails:
-      AgentA: "user1@example.com" # Replace with real email
-      AgentB: "user2@example.com" # Replace with real email
+      AgentA: "elifnr.yilmz@gmail.com" # Replace with real email
+      AgentB: "elifnr.yilmz@gmail.com" # Replace with real email
 
   # ========== INTERSECTION CONTROL ==========
   # intersections: Number of GUARANTEED common slots where ALL agents are available
@@ -51,7 +53,9 @@ environment:
   # ========== AVAILABILITY TABLE CONFIGURATION ==========
   # Only used in simulation mode (use_real_calendars=false)
   num_days: 5 # Number of days to show in availability table
-  slots_per_day: 24 # Number of time slots per day
+  slots_per_day: 24 # 24 saat/gün — graph_client tam 5×24=120 slot döndürür (mesai dışı = busy)
+  # ℹ️  GraphAPIClient 09:00-18:00 mesai saatlerinde takvim etkinliğini kontrol eder.
+  #     Mesai dışı saatler (00:00-09:00, 18:00-24:00) otomatik 'busy' işaretlenir.
   availability_rate: 0.4 # %40 ihtimalle ek slotlar available (her agent FARKLI olacak!)
   # availability_rate: 0.0 # 0.0 = SADECE intersection slotları (test için)
 communication_network:
@@ -85,7 +89,7 @@ llm:
     # ============================================
     # 🚀 BALANCED - COLAB T4 GPU İÇİN EN İYİ
     # ============================================
-    model: "Qwen/Qwen2.5-7B-Instruct" # 7B - Mükemmel denge, tool calling mükemmel (ÖNERİLEN!)
+    model: "Qwen/Qwen2.5-3B-Instruct" # 3B - T4 GPU için güvenli seçim (7B OOM veriyordu)
 
     # ============================================
     # 💪 GÜÇLÜ MODELLER (GPT-3.5+ Seviyesi)

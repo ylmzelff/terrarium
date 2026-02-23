@@ -8,11 +8,22 @@ from envs.dcops.meeting_scheduling.meeting_scheduling_tools import MeetingSchedu
 
 class ToolsetDiscovery:
     def __init__(self):
-        self.meeting_tools = MeetingSchedulingTools(blackboard_manager=None)
-        
+        self.meeting_tools = MeetingSchedulingTools(blackboard_manager=None, env=None)
+
         self._tools_by_environment = {
             "MeetingSchedulingEnvironment": self.meeting_tools,
         }
+
+    def set_environment(self, env: Any) -> None:
+        """
+        Wire the live environment instance into the tools object so agentic
+        tools (fetch_my_calendar, submit_availability_array) can call env methods.
+        Call this once after the environment is fully constructed.
+        """
+        self.meeting_tools.env = env
+        logger.info("🔗 ToolsetDiscovery: env reference wired into MeetingSchedulingTools (%s)",
+                    type(env).__name__)
+
 
     def get_tools_for_environment(self, environment_name: str, phase: str) -> List[Dict[str, Any]]:
         """

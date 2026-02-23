@@ -153,7 +153,8 @@ class GraphAPIClient:
         client_secret: Optional[str] = None,
         tenant_id: str = "common",
         timezone: str = "UTC",
-        token_cache_path: str = "token_cache.bin"
+        token_cache_path: str = "token_cache.bin",
+        fresh_auth: bool = True
     ):
         """
         Initialize Graph API client.
@@ -164,6 +165,9 @@ class GraphAPIClient:
             tenant_id: Azure Active Directory tenant ID (default: 'common')
             timezone: Default timezone for operations (default: "UTC")
             token_cache_path: Path to token cache file
+            fresh_auth: If True (default), clear all cached accounts at startup so
+                        device flow is always triggered — same behaviour as test_graph_api.py.
+                        Set to False to silently reuse cached tokens across runs.
         """
         if not GRAPH_AVAILABLE:
             raise ImportError(
@@ -175,6 +179,7 @@ class GraphAPIClient:
         self.tenant_id = tenant_id
         self.timezone = timezone
         self.token_cache_path = token_cache_path
+        self.fresh_auth = fresh_auth
         
         # Initialize Token Cache
         self.cache = SerializableTokenCache()
@@ -183,12 +188,22 @@ class GraphAPIClient:
                 self.cache.deserialize(f.read())
         
         # Initialize MSAL app (Public Client for Device Code flow)
-        authority_url = f"https://login.microsoftonline.com/{tenant_id}"
+        # Always use 'common' authority so personal Microsoft accounts (including
+        # Gmail-linked Outlook accounts) can authenticate. A specific tenant_id
+        # only works for work/school (M365) accounts.
+        authority_url = "https://login.microsoftonline.com/common"
         self.app = PublicClientApplication(
             client_id=client_id,
             authority=authority_url,
             token_cache=self.cache
         )
+        
+        # Mirror test_graph_api.py: remove all cached accounts so device flow
+        # is always triggered for a fresh interactive sign-in.
+        if self.fresh_auth:
+            for account in self.app.get_accounts():
+                self.app.remove_account(account)
+            logger.info("fresh_auth=True: cleared token cache — device flow will be triggered.")
         
         # We'll map email -> access_token in memory for rapid use during a session
         # but MSAL cache handles the actual persistence
@@ -324,30 +339,52 @@ class GraphAPIClient:
             "Prefer": f'outlook.timezone="{tz}"'
         }
         
-        payload = {
-            "schedules": [email],
-            "startTime": {
-                "dateTime": start_datetime.isoformat(),
-                "timeZone": tz
-            },
-            "endTime": {
-                "dateTime": end_datetime.isoformat(),
-                "timeZone": tz
-            },
-            "availabilityViewInterval": interval_minutes
+        # Use calendarView instead of getSchedule:
+        # - getSchedule only works for M365 work/school accounts
+        # - calendarView works for personal accounts (Gmail-linked, Outlook.com, etc.)
+        params = {
+            "startDateTime": start_datetime.isoformat(),
+            "endDateTime": end_datetime.isoformat(),
+            "$select": "subject,start,end,showAs",
+            "$orderby": "start/dateTime",
+            "$top": 100
         }
         
         try:
-            response = requests.post(
-                f"{self.GRAPH_API_BASE}/me/calendar/getSchedule",
+            response = requests.get(
+                f"{self.GRAPH_API_BASE}/me/calendarView",
                 headers=headers,
-                json=payload,
+                params=params,
                 timeout=30
             )
             response.raise_for_status()
             
             data = response.json()
-            availability = self._parse_availability_response(data, start_datetime, interval_minutes)
+            raw_events = data.get("value", [])
+
+            # ── HAM VERİ LOGU ──────────────────────────────────────────────
+            logger.info("=" * 70)
+            logger.info(f"📥 HAM TEAMS/OUTLOOK VERİSİ — {len(raw_events)} etkinlik bulundu")
+            logger.info(f"   Sorgu: {start_datetime.isoformat()} → {end_datetime.isoformat()}")
+            logger.info(f"   Timezone: {tz}")
+            if raw_events:
+                for i, ev in enumerate(raw_events, 1):
+                    subj      = ev.get("subject", "(başlıksız)")
+                    ev_start  = ev.get("start", {}).get("dateTime", "?")
+                    ev_end    = ev.get("end",   {}).get("dateTime", "?")
+                    show_as   = ev.get("showAs", "?")
+                    logger.info(f"   [{i:02d}] '{subj}'")
+                    logger.info(f"        Başlangıç : {ev_start}")
+                    logger.info(f"        Bitiş     : {ev_end}")
+                    logger.info(f"        Durum     : {show_as}")
+            else:
+                logger.info("   (Bu aralıkta hiç takvim etkinliği yok)")
+            logger.info("=" * 70)
+            # ───────────────────────────────────────────────────────────────
+
+            availability = self._parse_calendar_view_response(
+                data, start_datetime, end_datetime, interval_minutes
+            )
             
             logger.info(f"✅ Retrieved {len(availability)} availability slots")
             return availability
@@ -363,45 +400,129 @@ class GraphAPIClient:
         interval_minutes: int
     ) -> List[Dict[str, Any]]:
         """
-        Parse Graph API getSchedule response into availability slots.
-        
-        Args:
-            response: Raw Graph API response
-            start_datetime: Query start time
-            interval_minutes: Slot duration
-        
-        Returns:
-            List of availability slots with status
+        LEGACY: Parse Graph API getSchedule response.
+        Kept for backwards compatibility. New code uses _parse_calendar_view_response.
         """
         slots = []
-        
         if "value" not in response or not response["value"]:
-            logger.warning("Empty availability response")
             return slots
-        
         schedule = response["value"][0]
         availability_view = schedule.get("availabilityView", "")
-        
-        # availabilityView is a string where each character represents a time slot:
-        # '0' = free, '1' = tentative, '2' = busy, '3' = out of office, '4' = working elsewhere
+        status_map = {'0': 'free', '1': 'tentative', '2': 'busy', '3': 'oof', '4': 'working_elsewhere'}
         for i, status_code in enumerate(availability_view):
             slot_start = start_datetime + timedelta(minutes=i * interval_minutes)
             slot_end = slot_start + timedelta(minutes=interval_minutes)
-            
-            status_map = {
-                '0': 'free',
-                '1': 'tentative',
-                '2': 'busy',
-                '3': 'oof',  # out of office
-                '4': 'working_elsewhere'
-            }
-            
             slots.append({
                 "start": slot_start.isoformat(),
                 "end": slot_end.isoformat(),
                 "status": status_map.get(status_code, 'unknown')
             })
-        
+        return slots
+
+    def _parse_calendar_view_response(
+        self,
+        response: Dict[str, Any],
+        start_datetime: datetime,
+        end_datetime: datetime,
+        interval_minutes: int,
+        work_hours_start: int = 9,
+        work_hours_end: int = 18
+    ) -> List[Dict[str, Any]]:
+        """
+        Parse Graph API calendarView response into fixed-interval availability slots.
+
+        Only slots that fall WITHIN working hours (work_hours_start..work_hours_end)
+        are included. Slots outside working hours are always marked 'busy' so that
+        midnight-08:59 and 18:00+ don't pollute the availability array with fake 1s.
+
+        Args:
+            response: Raw calendarView API response (has 'value' list of events)
+            start_datetime: Query start time
+            end_datetime: Query end time
+            interval_minutes: Slot duration in minutes
+            work_hours_start: First working hour of day, inclusive (default: 9 → 09:00)
+            work_hours_end: Last working hour of day, exclusive (default: 18 → until 18:00)
+
+        Returns:
+            List of dicts: [{"start": ..., "end": ..., "status": "free"|"busy"}, ...]
+            Only work-hour slots are returned; off-hours slots are skipped entirely.
+        """
+        events = response.get("value", [])
+
+        # Parse event times into (start, end) pairs as naive datetimes
+        busy_intervals = []
+        for event in events:
+            show_as = event.get("showAs", "busy")  # free/tentative/busy/oof/workingElsewhere
+            if show_as == "free":
+                continue  # transparent/all-day free events — skip
+            try:
+                ev_start_str = event["start"]["dateTime"]
+                ev_end_str   = event["end"]["dateTime"]
+                ev_start = datetime.fromisoformat(ev_start_str.rstrip("Z").split(".")[0])
+                ev_end   = datetime.fromisoformat(ev_end_str.rstrip("Z").split(".")[0])
+                busy_intervals.append((ev_start, ev_end))
+            except (KeyError, ValueError):
+                continue
+
+        logger.info(f"🔄 Slot dönüşümü başlıyor | Çalışma saatleri: {work_hours_start:02d}:00–{work_hours_end:02d}:00 | "
+                    f"Meşgul aralıklar: {len(busy_intervals)}")
+
+        # ── BUGFIX: Start from midnight of the FIRST day, not from datetime.now() ──
+        # This ensures clean 00:00, 01:00, 02:00 ... 23:00 boundaries every day.
+        # Non-work hours are marked 'busy' (not skipped), so the total slot count
+        # always equals (num_days × 24) and matches slots_per_day=24 in the env config.
+        naive_start = start_datetime.replace(tzinfo=None) if start_datetime.tzinfo else start_datetime
+        naive_end   = end_datetime.replace(tzinfo=None)   if end_datetime.tzinfo   else end_datetime
+
+        # Snap to midnight of first day
+        day_start = naive_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end   = naive_end.replace  (hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+        slot_start = day_start
+        slots      = []
+        slot_idx   = 0
+
+        while slot_start < day_end:
+            slot_end = slot_start + timedelta(minutes=interval_minutes)
+            hour     = slot_start.hour
+
+            # Mesai dışı saatler otomatik MEŞGUL
+            outside_work = (hour < work_hours_start or hour >= work_hours_end)
+
+            if outside_work:
+                slots.append({
+                    "start":  slot_start.isoformat(),
+                    "end":    slot_end.isoformat(),
+                    "status": "busy"
+                })
+                logger.debug(f"   Slot[{slot_idx:03d}] {slot_start.strftime('%Y-%m-%d %H:%M')}–{slot_end.strftime('%H:%M')} → ⬛ MESAİ DIŞI (0)")
+            else:
+                # Takvim etkinliği ile çakışıyor mu?
+                is_busy = any(
+                    ev_s < slot_end and ev_e > slot_start
+                    for ev_s, ev_e in busy_intervals
+                )
+                icon = "🔴 MEŞGUL (0)" if is_busy else "🟢 MÜSAİT (1)"
+                logger.info(f"   Slot[{slot_idx:03d}] {slot_start.strftime('%Y-%m-%d %H:%M')}–{slot_end.strftime('%H:%M')} → {icon}")
+                slots.append({
+                    "start":  slot_start.isoformat(),
+                    "end":    slot_end.isoformat(),
+                    "status": "busy" if is_busy else "free"
+                })
+
+            slot_start = slot_end
+            slot_idx  += 1
+
+        # Summary — only count work-hour slots for clarity
+        work_slots  = [s for s in slots if work_hours_start <= datetime.fromisoformat(s["start"]).hour < work_hours_end]
+        binary_work = [0 if s["status"] == "busy" else 1 for s in work_slots]
+        binary_all  = [0 if s["status"] == "busy" else 1 for s in slots]
+        logger.info("─" * 70)
+        logger.info(f"📊 SLOT DÖNÜŞÜM ÖZET: {len(slots)} toplam slot | İş saati slotları: {len(work_slots)}")
+        logger.info(f"   İş saati binary → {binary_work}")
+        logger.info(f"   Tüm array (120)  → {binary_all}")
+        logger.info("─" * 70)
+
         return slots
     
     @rate_limit(calls_per_second=2.0)
@@ -525,7 +646,7 @@ class GraphAPIClient:
         return response.json().get("value", [])
     
     @classmethod
-    def from_env(cls, timezone: str = "UTC") -> "GraphAPIClient":
+    def from_env(cls, timezone: str = "UTC", fresh_auth: bool = True) -> "GraphAPIClient":
         """
         Create client from environment variables.
         
@@ -536,6 +657,7 @@ class GraphAPIClient:
         
         Args:
             timezone: Default timezone (default: "UTC")
+            fresh_auth: If True (default), always trigger device flow (clears cache).
         
         Returns:
             Initialized GraphAPIClient
@@ -557,7 +679,8 @@ class GraphAPIClient:
             client_id=client_id,
             client_secret=client_secret,
             tenant_id=tenant_id,
-            timezone=timezone
+            timezone=timezone,
+            fresh_auth=fresh_auth
         )
 
 
