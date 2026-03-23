@@ -1180,6 +1180,62 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                             logger.info(
                                 f"  ✓ Blackboard {blackboard_id}: Logged to agents {', '.join(relevant_agents)}"
                             )
+
+                            # Also post explicit OT input/output details so blackboard logs show
+                            # exactly what entered OT and what intersection was produced.
+                            if len(relevant_agents) == 2:
+                                sender_name = relevant_agents[0]
+                                receiver_name = relevant_agents[1]
+                                sender_array = filtered_slots.get(sender_name, [])
+                                receiver_array = filtered_slots.get(receiver_name, [])
+                                sender_indices = [i for i, v in enumerate(sender_array) if v == AvailabilityConstants.AVAILABLE]
+                                receiver_indices = [i for i, v in enumerate(receiver_array) if v == AvailabilityConstants.AVAILABLE]
+                                intersection_indices = [i for i, v in enumerate(intersection) if v == AvailabilityConstants.AVAILABLE]
+
+                                ot_payload = {
+                                    "message": f"OT details for {meeting_id}: {len(intersection_indices)} common slot(s)",
+                                    "meeting_id": meeting_id,
+                                    "participants": relevant_agents,
+                                    "sender": sender_name,
+                                    "receiver": receiver_name,
+                                    "sender_array": sender_array,
+                                    "receiver_array": receiver_array,
+                                    "sender_available_indices": sender_indices,
+                                    "receiver_available_indices": receiver_indices,
+                                    "intersection_array": intersection,
+                                    "intersection_indices": intersection_indices,
+                                    "common_slots": len(intersection_indices),
+                                    "phase": AvailabilityConstants.PHASE_PLANNING,
+                                    "iteration": int(self.current_iteration),
+                                }
+
+                                ot_result_raw = await client.call_tool("post_system_message", {
+                                    "blackboard_id": blackboard_id,
+                                    "kind": "ot_protocol",
+                                    "payload": ot_payload,
+                                })
+
+                                ot_result = ot_result_raw
+                                if hasattr(ot_result_raw, "content"):
+                                    content = ot_result_raw.content
+                                    if hasattr(content, "text"):
+                                        try:
+                                            ot_result = json.loads(content.text)
+                                        except json.JSONDecodeError:
+                                            ot_result = {"status": "error", "message": "Invalid JSON response"}
+
+                                if isinstance(ot_result, dict) and ot_result.get("status") == "error":
+                                    logger.warning(
+                                        "  ✗ Blackboard %s: OT detail event failed - %s",
+                                        blackboard_id,
+                                        ot_result,
+                                    )
+                                else:
+                                    logger.info(
+                                        "  ✓ Blackboard %s: OT detail event posted (%d common slots)",
+                                        blackboard_id,
+                                        len(intersection_indices),
+                                    )
                         else:
                             logger.warning(
                                 f"  ✗ Blackboard {blackboard_id}: Failed - {result}"

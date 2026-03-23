@@ -603,6 +603,34 @@ class BlackboardLogger:
                 formatted += f"  Message: \"{payload['message']}\"\n"
             if "items" in payload:
                 formatted += f"  Current Inventory: {payload['items']}\n"
+
+        elif event_kind == "ot_protocol":
+            if "message" in payload:
+                formatted += f"  Message: \"{payload['message']}\"\n"
+            if "meeting_id" in payload:
+                formatted += f"  Meeting_ID: {payload['meeting_id']}\n"
+            if "participants" in payload:
+                formatted += f"  Participants: {payload['participants']}\n"
+            if "sender" in payload:
+                formatted += f"  Sender: {payload['sender']}\n"
+            if "receiver" in payload:
+                formatted += f"  Receiver: {payload['receiver']}\n"
+
+            if "sender_array" in payload:
+                formatted += f"  Sender_Array: {payload['sender_array']}\n"
+            if "receiver_array" in payload:
+                formatted += f"  Receiver_Array: {payload['receiver_array']}\n"
+            if "sender_available_indices" in payload:
+                formatted += f"  Sender_Available_Indices: {payload['sender_available_indices']}\n"
+            if "receiver_available_indices" in payload:
+                formatted += f"  Receiver_Available_Indices: {payload['receiver_available_indices']}\n"
+
+            if "intersection_array" in payload:
+                formatted += f"  Intersection_Array: {payload['intersection_array']}\n"
+            if "intersection_indices" in payload:
+                formatted += f"  Intersection_Indices: {payload['intersection_indices']}\n"
+            if "common_slots" in payload:
+                formatted += f"  Common_Slots: {payload['common_slots']}\n"
         
         else:
             # Generic payload handling for other event types
