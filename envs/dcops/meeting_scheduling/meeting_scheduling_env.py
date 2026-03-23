@@ -386,11 +386,13 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
     
     def _generate_simulated_availability(self, participants: List[str]) -> Dict[str, List[int]]:
         """
-        Generate SIMULATED availability arrays with GUARANTEED intersections.
+        Generate SIMULATED availability arrays for testing.
         
-        The 'intersections' config parameter controls how many slots ALL participants
-        are guaranteed to be available. This creates a controlled test scenario where
-        the OT protocol is guaranteed to find exactly N common slots.
+        Generation logic mirrors examples/generate_availability_configs.py:
+        - Each agent gets approximately availability_rate fraction of available slots.
+        - A guaranteed number of COMMON slots are injected for all participants.
+        - Non-intersection available slots are sampled without overlap where possible,
+          so pairwise overlap is primarily controlled by the guaranteed intersections.
         
         Args:
             participants: List of agent names participating in this meeting
@@ -403,52 +405,83 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         # Get configuration parameters
         total_slots = self.num_days * self.slots_per_day
-        availability_rate = self.env_config.get('availability_rate', 0.4)  # 40% default
-        num_intersections = self.env_config.get('intersections', 3)  # Default: 3 common slots
+        availability_rate = float(self.env_config.get('availability_rate', 0.4))  # 40% default
+        availability_rate = max(0.0, min(1.0, availability_rate))
+
+        # Supports two config styles:
+        # - intersection or intersections: absolute slot count (preferred for this env)
+        # - intersection_density: fraction of total slots (optional compatibility)
+        intersections_cfg = self.env_config.get('intersections') or self.env_config.get('intersection', 0)
+        intersection_density_cfg = float(self.env_config.get('intersection_density', 0.0))
+        intersection_density_cfg = max(0.0, min(1.0, intersection_density_cfg))
+
+        num_available_per_agent = round(total_slots * availability_rate)
+
+        if isinstance(intersections_cfg, float) and 0.0 <= intersections_cfg <= 1.0:
+            requested_intersections = round(total_slots * intersections_cfg)
+        else:
+            requested_intersections = int(intersections_cfg) if intersections_cfg else 0
+        if requested_intersections <= 0 and intersection_density_cfg > 0.0:
+            requested_intersections = round(total_slots * intersection_density_cfg)
+
+        requested_intersections = max(0, requested_intersections)
+        num_intersections = min(requested_intersections, num_available_per_agent, total_slots)
         
-        # Validate intersections parameter
-        if num_intersections > total_slots:
-            logger.warning(
-                f"intersections={num_intersections} > total_slots={total_slots}, "
-                f"capping to {total_slots}"
-            )
-            num_intersections = total_slots
+        logger.debug(f"Intersection config: intersections_cfg={intersections_cfg}, "
+                    f"requested={requested_intersections}, "
+                    f"available_per_agent={num_available_per_agent}, "
+                    f"final_num_intersections={num_intersections}")
+
+        base_rng = random.Random(self.current_seed)
+        if num_intersections > 0:
+            intersection_slots = sorted(base_rng.sample(range(total_slots), num_intersections))
+        else:
+            intersection_slots = []
         
-        logger.info(
-            f"Generating controlled availability: {total_slots} total slots, "
-            f"{num_intersections} GUARANTEED intersections (common slots)"
-        )
-        
-        # Step 1: Select N random slots that will be the GUARANTEED intersection
-        # These slots will be available (1) for ALL participants
-        intersection_slots = random.sample(range(total_slots), num_intersections)
-        intersection_slots.sort()  # Sort for readability
-        
-        logger.info(f"  🎯 Guaranteed intersection slots: {intersection_slots}")
+        logger.info("=" * 80)
+        logger.info("📊 GENERATING AVAILABILITY ARRAYS FOR SIMULATION")
+        logger.info("=" * 80)
+        logger.info(f"Total slots: {total_slots}")
+        logger.info(f"Availability rate target: ~{int(availability_rate*100)}%")
+        logger.info(f"Guaranteed intersections target: {num_intersections}")
+        logger.info("-" * 80)
         
         availability = {}
+        used_non_intersection_slots = set()
         
-        # Step 2: Generate availability for each participant
+        # Generate arrays with guaranteed common slots and controlled extra slots
         for agent_idx, agent_name in enumerate(participants):
-            # Use agent-specific random seed for reproducibility but agent-level variation
-            # This ensures different agents have different availability patterns
-            agent_seed = self.current_seed + hash(agent_name) % 10000
+            # Use a stable per-agent seed for reproducible but distinct arrays.
+            agent_seed = self.current_seed + ((agent_idx + 1) * 1009)
             rng = random.Random(agent_seed)
             
             slots = [AvailabilityConstants.BUSY] * total_slots  # Start with all busy
-            
-            # Step 2a: Set intersection slots to AVAILABLE for this agent
+
+            # Step 1: force guaranteed common slots for all participants
             for slot_idx in intersection_slots:
                 slots[slot_idx] = AvailabilityConstants.AVAILABLE
-            
-            # Step 2b: Randomly set other slots based on availability_rate
-            # (but never override the guaranteed intersection slots)
+
+            # Step 2: fill additional available slots for this agent
+            num_additional = max(0, num_available_per_agent - num_intersections)
             remaining_slots = [i for i in range(total_slots) if i not in intersection_slots]
-            for slot_idx in remaining_slots:
-                is_available = rng.random() < availability_rate  # Agent-specific random
-                slots[slot_idx] = (
-                    AvailabilityConstants.AVAILABLE if is_available 
-                    else AvailabilityConstants.BUSY
+            remaining_slots = [i for i in remaining_slots if i not in used_non_intersection_slots]
+
+            actual_additional = min(num_additional, len(remaining_slots))
+            if actual_additional > 0:
+                additional_slots = rng.sample(remaining_slots, actual_additional)
+                for slot_idx in additional_slots:
+                    slots[slot_idx] = AvailabilityConstants.AVAILABLE
+                used_non_intersection_slots.update(additional_slots)
+            else:
+                additional_slots = []
+
+            if actual_additional < num_additional:
+                logger.warning(
+                    "Agent %s requested %d additional slots but only %d were available "
+                    "after enforcing non-overlap.",
+                    agent_name,
+                    num_additional,
+                    actual_additional,
                 )
             
             availability[agent_name] = slots
@@ -456,14 +489,17 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             # Log agent availability summary
             available_count = sum(slots)
             available_indices = [i for i, val in enumerate(slots) if val == 1]
-            logger.info(
-                f"  {agent_name}: {available_count}/{total_slots} available slots"
-            )
-            logger.debug(f"    Available indices: {available_indices}")
+            logger.info(f"\n🔷 {agent_name}:")
+            logger.info(f"   Available slots: {available_count}/{total_slots} ({available_count/total_slots*100:.1f}%)")
+            logger.info(f"   Guaranteed common slots (shared): {len(intersection_slots)}")
+            logger.info(f"   Additional private slots: {len(additional_slots)}")
+            logger.info(f"   Available indices: {available_indices}")
+            logger.info(f"   Full array: {slots}")
         
-        logger.info(
-            f"  ✅ Guaranteed: ALL {len(participants)} participants available at slots {intersection_slots}"
-        )
+        logger.info("-" * 80)
+        logger.info(f"✅ Guaranteed intersection slots: {intersection_slots}")
+        logger.info("ℹ️  OT protocol will compute/verify the actual common slots from these arrays")
+        logger.info("=" * 80)
         
         return availability
 
@@ -600,65 +636,112 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         """
         Called by the fetch_my_calendar tool.
 
-        Fetches the calling agent's Outlook/Teams calendar events via Graph API and
-        returns them together with slot configuration so the LLM can build its own
-        binary availability array.
+        Returns the agent's calendar events so they can build their availability array.
+        - If use_real_calendars=False: Returns pre-generated simulated availability
+        - If use_real_calendars=True: Fetches real Outlook/Teams calendar via Graph API
 
         Returns a dict the LLM receives as tool output:
           {
-            "events":      [ {"subject": ..., "start": ..., "end": ..., "showAs": ...}, ... ],
+            "events":      [ {"slot_index": ..., "start": ..., "end": ..., "status": "free"|"busy"}, ... ],
             "slot_info":   { "total_slots": 120, "slot_duration_minutes": 60, ... },
             "instructions": "..."
           }
         """
         from datetime import datetime, timedelta
+        
+        use_real_calendars = self.env_config.get("use_real_calendars", False)
+        total_slots = self.num_days * self.slots_per_day
+        
+        if use_real_calendars:
+            # ════════════════════════════════════════════════════════════════
+            # REAL CALENDARS MODE: Fetch from Microsoft Graph API
+            # ════════════════════════════════════════════════════════════════
+            graph_config = self.env_config.get("graph_api", {})
+            agent_emails = graph_config.get("agent_emails", {})
+            email = agent_emails.get(agent_name)
 
-        graph_config = self.env_config.get("graph_api", {})
-        agent_emails = graph_config.get("agent_emails", {})
-        email = agent_emails.get(agent_name)
+            if not email:
+                raise RuntimeError(
+                    f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
+                    f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
+                )
 
-        if not email:
-            raise RuntimeError(
-                f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
-                f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
+            # Lazy-init Graph API client (should already exist from async_init)
+            if not hasattr(self, "_graph_client"):
+                from llm_server.clients.graph_client import GraphAPIClient
+                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
+                logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
+
+            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            end_dt   = start_dt + timedelta(days=self.num_days)
+
+            logger.info("📅 [%s] Fetching REAL calendar from Graph API (%s → %s)", 
+                        agent_name, start_dt.date(), end_dt.date())
+            
+            raw_slots = self._graph_client.get_availability(
+                email=email,
+                start_datetime=start_dt,
+                end_datetime=end_dt,
+                interval_minutes=60,
             )
 
-        # Lazy-init Graph API client (should already exist from async_init)
-        if not hasattr(self, "_graph_client"):
-            from llm_server.clients.graph_client import GraphAPIClient
-            self._graph_client = GraphAPIClient.from_yaml(self.full_config)
-            logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
+            # Convert to event list
+            events = [
+                {
+                    "slot_index": i,
+                    "start":  s["start"],
+                    "end":    s["end"],
+                    "status": s["status"],   # "free" | "busy"
+                }
+                for i, s in enumerate(raw_slots)
+            ]
 
-        total_slots = self.num_days * self.slots_per_day
-        start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        end_dt   = start_dt + timedelta(days=self.num_days)
+            busy_count = sum(1 for e in events if e["status"] == "busy")
+            logger.info("📋 [%s] Returned %d REAL calendar slots (%d busy, %d free) for meeting %s",
+                        agent_name, len(events), busy_count, len(events) - busy_count, meeting_id)
+        
+        else:
+            # ════════════════════════════════════════════════════════════════
+            # SIMULATION MODE: Return pre-generated random availability
+            # ════════════════════════════════════════════════════════════════
+            logger.info("🔬 [%s] Returning SIMULATED calendar for meeting %s", 
+                        agent_name, meeting_id)
+            
+            # Get simulated availability from cache (generated during __init__)
+            if meeting_id not in self._simulated_availability_cache:
+                raise RuntimeError(
+                    f"❌ No simulated availability cached for meeting {meeting_id}. "
+                    f"This should have been generated during __init__."
+                )
+            
+            agent_availability = self._simulated_availability_cache[meeting_id].get(agent_name)
+            if agent_availability is None:
+                raise RuntimeError(
+                    f"❌ No simulated availability for agent {agent_name} in meeting {meeting_id}"
+                )
+            
+            # Convert binary array to event list format (same as Graph API)
+            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            events = []
+            for slot_idx, is_available in enumerate(agent_availability):
+                slot_start = start_dt + timedelta(hours=slot_idx)
+                slot_end = slot_start + timedelta(hours=1)
+                
+                events.append({
+                    "slot_index": slot_idx,
+                    "start": slot_start.isoformat(),
+                    "end": slot_end.isoformat(),
+                    "status": "free" if is_available == 1 else "busy",
+                })
+            
+            busy_count = sum(1 for e in events if e["status"] == "busy")
+            logger.info("📋 [%s] Returned %d SIMULATED slots (%d busy, %d free) for meeting %s",
+                        agent_name, len(events), busy_count, len(events) - busy_count, meeting_id)
 
-        # No try/except — let it crash and stop the simulation
-        logger.info("📅 [%s] Fetching calendar for %s (%s → %s)", agent_name, email, start_dt.date(), end_dt.date())
-        raw_slots = self._graph_client.get_availability(
-            email=email,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            interval_minutes=60,
-        )
-
-        # Convert slots list to a simple event list the LLM can reason about
-        events = [
-            {
-                "slot_index": i,
-                "start":  s["start"],
-                "end":    s["end"],
-                "status": s["status"],   # "free" | "busy"
-            }
-            for i, s in enumerate(raw_slots)
-        ]
-
-        logger.info("📋 [%s] Returned %d slots (%d busy) for meeting %s",
-                    agent_name,
-                    len(events),
-                    sum(1 for e in events if e["status"] == "busy"),
-                    meeting_id)
-
+        # ════════════════════════════════════════════════════════════════
+        # Return same format regardless of mode
+        # ════════════════════════════════════════════════════════════════
         return {
             "meeting_id": meeting_id,
             "agent":      agent_name,
@@ -668,7 +751,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "slots_per_day":         self.slots_per_day,
                 "num_days":              self.num_days,
                 "slot_duration_minutes": 60,
-                "date_range":            f"{start_dt.date()} to {(end_dt - timedelta(days=1)).date()}",
                 "work_hours":            "09:00–18:00 (slots outside this range are always busy)",
             },
             "instructions": (
@@ -866,12 +948,19 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             logger.info(f"Receiver: {receiver} ({len(receiver_indices)} available slots)")
             logger.info(f"Total slots: {total_slots}")
             logger.info("-" * 80)
-            logger.info(f"Input (Sender {sender} binary):   {sender_availability}")
-            logger.info(f"Input (Receiver {receiver} binary): {receiver_availability}")
-            logger.info(f"Sender available indices:          {sender_indices}")
-            logger.info(f"Receiver available indices:        {receiver_indices}")
+            logger.info(f"📥 OT INPUT ARRAYS:")
+            logger.info(f"")
+            logger.info(f"   {sender} (Sender):")
+            logger.info(f"      Binary array: {sender_availability}")
+            logger.info(f"      Available indices: {sender_indices}")
+            logger.info(f"      Available count: {len(sender_indices)}/{total_slots}")
+            logger.info(f"")
+            logger.info(f"   {receiver} (Receiver):")
+            logger.info(f"      Binary array: {receiver_availability}")
+            logger.info(f"      Available indices: {receiver_indices}")
+            logger.info(f"      Available count: {len(receiver_indices)}/{total_slots}")
             logger.info("-" * 80)
-            logger.info("Executing OT phases: Setup → GenQuery → GenRes → oblFilter → Retrieve")
+            logger.info("⚙️  Executing OT phases: Setup → GenQuery → GenRes → oblFilter → Retrieve")
             
             start_time = time.time()
             
@@ -887,13 +976,16 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             
             logger.info(f"✓ OT Protocol Complete (Duration: {ot_duration:.4f}s)")
             logger.info("-" * 80)
-            logger.info(f"📊 RESULTS:")
-            logger.info(f"   Common slots found: {len(common_indices)}/{total_slots}")
+            logger.info(f"📊 OT OUTPUT - INTERSECTION RESULT:")
+            logger.info(f"")
+            logger.info(f"   Common slots found: {len(common_indices)}/{total_slots} ({len(common_indices)/total_slots*100:.1f}%)")
             logger.info(f"   Intersection indices: {common_indices}")
-            logger.info(f"   Privacy guarantee: ✓ NO individual availability disclosed")
-            logger.info(f"   {sender} does NOT know {receiver}'s individual slots")
-            logger.info(f"   {receiver} does NOT know {sender}'s individual slots")
-            logger.info(f"   Both parties ONLY know: {common_indices} (intersection)")
+            logger.info(f"   Intersection binary array: {intersection}")
+            logger.info(f"")
+            logger.info(f"   🔐 Privacy guarantee: ✓ NO individual availability disclosed")
+            logger.info(f"      • {sender} does NOT know {receiver}'s individual slots")
+            logger.info(f"      • {receiver} does NOT know {sender}'s individual slots")
+            logger.info(f"      • Both parties ONLY know: {common_indices} (intersection)")
             logger.info("=" * 80)
             
             meeting_intersections[meeting_id] = intersection
