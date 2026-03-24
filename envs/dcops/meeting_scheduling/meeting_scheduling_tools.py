@@ -223,6 +223,27 @@ class MeetingSchedulingTools:
                 agent_name, free_count, total_slots, meeting_id,
             )
 
+            # ── Log fetch event to blackboard ──
+            available_indices = [i for i, v in enumerate(agent_slots) if v == 1]
+            try:
+                self.blackboard_manager.post_system_message(
+                    blackboard_id=0,
+                    kind="agent_fetch_calendar",
+                    payload={
+                        "message": f"[STEP] {agent_name} fetched calendar for meeting {meeting_id}",
+                        "agent": agent_name,
+                        "meeting_id": meeting_id,
+                        "mode": "simulation",
+                        "total_slots": total_slots,
+                        "free_slots": free_count,
+                        "busy_slots": total_slots - free_count,
+                        "generated_array": agent_slots,
+                        "available_indices": available_indices,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Could not log fetch event to blackboard: %s", exc)
+
             return {
                 "meeting_id": meeting_id,
                 "agent":      agent_name,
@@ -394,6 +415,7 @@ class MeetingSchedulingTools:
         self._submitted_arrays[meeting_id][agent_name] = availability
 
         free_count = sum(availability)
+        available_indices = [i for i, v in enumerate(availability) if v == 1]
         logger.info(
             "📥 Availability submitted | meeting=%s | agent=%s | free=%d/%d",
             meeting_id, agent_name, free_count, total_slots,
@@ -419,6 +441,25 @@ class MeetingSchedulingTools:
             print(f"Day {day+1}: {slot_str}")
             
         print(f"{'='*80}\n")
+
+        # ── Log submit event to blackboard ──
+        try:
+            self.blackboard_manager.post_system_message(
+                blackboard_id=0,
+                kind="agent_submit_array",
+                payload={
+                    "message": f"[STEP] {agent_name} submitted availability array for meeting {meeting_id}",
+                    "agent": agent_name,
+                    "meeting_id": meeting_id,
+                    "total_slots": total_slots,
+                    "free_slots": free_count,
+                    "busy_slots": total_slots - free_count,
+                    "submitted_array": availability,
+                    "available_indices": available_indices,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Could not log submit event to blackboard: %s", exc)
 
         # Who are the participants for this meeting?
         meetings     = env_state.get("meetings", {}) if env_state else {}
@@ -504,8 +545,7 @@ class MeetingSchedulingTools:
         except (TypeError, ValueError):
             return {"status": "failed", "reason": "Invalid meeting window in state."}
 
-        meeting_type        = str(meeting.get("meeting_type", "soft"))
-        allowed             = self._allowed_intervals(start, end, meeting_type)
+        allowed             = self._allowed_intervals(start, end)
         normalized_interval = self._normalize_interval(interval, start, end)
 
         if normalized_interval not in allowed:
@@ -530,7 +570,6 @@ class MeetingSchedulingTools:
                 "meeting": {
                     "id": meeting_id,
                     "title": meeting.get("title"),
-                    "meeting_type": meeting_type,
                     "window": [start, end],
                     "participants": participants,
                 },
@@ -552,13 +591,11 @@ class MeetingSchedulingTools:
     # ── Helpers ────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _allowed_intervals(start: int, end: int, meeting_type: str) -> Set[str]:
+    def _allowed_intervals(start: int, end: int) -> Set[str]:
         allowed: Set[str] = {"skip"}
         for join in range(start, end):
             for leave in range(join + 1, end + 1):
                 allowed.add(f"{join}-{leave}")
-            if meeting_type == "strict":
-                break
         return allowed
 
     @staticmethod

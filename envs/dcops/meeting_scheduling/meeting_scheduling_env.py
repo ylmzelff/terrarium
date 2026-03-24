@@ -3,8 +3,7 @@
 Agents coordinate to schedule meetings at earliest common available slots
 using privacy-preserving Oblivious Transfer (OT) protocol.
 """
-from pathlib import Path
-from typing import Dict, List, Any, Optional, TYPE_CHECKING, Tuple, Mapping
+from typing import Dict, List, Any, Optional, TYPE_CHECKING, Mapping
 
 import os
 import logging
@@ -20,20 +19,16 @@ if TYPE_CHECKING:
 from envs.abstract_environment import AbstractEnvironment
 from src.utils import (
     clear_seed_directories,
-    extract_model_info,
-    get_tag_model_subdir,
     get_run_timestamp,
-    build_log_dir,
 )
 from .meeting_scheduling_prompts import MeetingSchedulingPrompts
 
 class SimpleMeeting:
     """Simple meeting object."""
-    def __init__(self, meeting_id: str, title: str, participants: List[str], meeting_type: str = "soft"):
+    def __init__(self, meeting_id: str, title: str, participants: List[str]):
         self.meeting_id = meeting_id
         self.title = title
         self.participants = participants
-        self.meeting_type = meeting_type  # "soft" or "strict"; used by get_serializable_state
 
 
 class SimpleProblemDefinition:
@@ -70,8 +65,8 @@ class SimpleProblemDefinition:
 class MeetingSchedulingEnvironment(AbstractEnvironment):
     """MeetingScheduling environment for multi-agent coordination.
 
-    Agents coordinate attendance decisions to maximize joint reward
-    while respecting availability constraints discovered via OT protocol.
+    Agents coordinate attendance decisions while respecting availability
+    constraints discovered via OT protocol.
     """
 
     def __init__(self, communication_protocol, config, tool_logger):
@@ -125,16 +120,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         self.instance = SimpleInstance(self.meetings)
         self.problem = SimpleProblemDefinition(self.agent_names, self.meetings)
 
-        # Score tracking
-        self.joint_reward_history: List[float] = []
-        self.max_joint_reward = float(num_meetings)  # 1.0 point per meeting scheduled
         self.agents: List["BaseAgent"] = []
 
         # Initialize prompts (Put this after all other instance variables)
         self.prompts = MeetingSchedulingPrompts(self, self.full_config)
-
-        # Initialize score tracking
-        self.agent_rewards_history: Dict[str, List[float]] = {agent: [] for agent in self.agent_names}
 
         # Availability table configuration (from config or defaults)
         self.num_days = self.env_config.get("num_days", 1)
@@ -295,68 +284,21 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Stop early if all variables have been assigned
         total_vars = len(self.problem.variables)
         if len(self.assignment) == total_vars:
-            joint_reward = self.joint_reward(self.assignment)
-            logger.info(
-                "All attendance decisions made with joint reward: %.2f - simulation complete",
-                joint_reward,
-            )
+            logger.info("All attendance decisions made - simulation complete")
             return True
         return False
     
     def compute_max_joint_reward(self) -> float:
-        """Return the optimal joint reward (1.0 per agent per successful meeting)."""
-        # Maximum reward = all agents successfully scheduled all meetings at earliest common slot
-        return float(len(self.agent_names) * len(self.meetings))
+        """Rewarding is disabled for this environment."""
+        return 0.0
 
     def joint_reward(self, actions: Mapping[str, Any]) -> float:
-        """Return the joint reward for a joint assignment."""
-        total_reward, _ = self._rewards(actions)
-        return total_reward
+        """Rewarding is disabled for this environment."""
+        return 0.0
 
     def agent_reward(self, actions: Mapping[str, Any], agent: str) -> float:
-        """Return the reward attributed to a single agent."""
-        _, local_rewards = self._rewards(actions)
-        return local_rewards.get(agent, 0.0)
-
-    def _rewards(self, actions: Mapping[str, Any]) -> Tuple[float, Dict[str, float]]:
-        """Compute rewards based on successful slot selections.
-        
-        Reward = 1.0 for each agent that selected a valid slot from the intersection.
-        """
-        total_reward = 0.0
-        local_rewards: Dict[str, float] = {agent: 0.0 for agent in self.agent_names}
-        
-        # For each meeting, check if agents selected slots from the intersection
-        meeting_intersections = self._generate_meeting_intersections()
-        
-        for meeting_id, intersection in meeting_intersections.items():
-            # Find intersection slots (where value = 1)
-            valid_slots = [i for i, val in enumerate(intersection) if val == 1]
-            
-            if not valid_slots:
-                continue
-            
-            # Check each agent's choice for this meeting
-            for agent in self.agent_names:
-                var_name = f"{agent}__{meeting_id}"
-                if var_name in actions:
-                    chosen_interval = actions[var_name]
-                    
-                    # Parse interval (e.g., "3" or "3-4")
-                    try:
-                        if '-' in str(chosen_interval):
-                            start = int(chosen_interval.split('-')[0])
-                        else:
-                            start = int(chosen_interval)
-                        
-                        # Reward if chosen slot is in valid intersection slots
-                        if start in valid_slots:
-                            total_reward += 1.0
-                            local_rewards[agent] += 1.0
-                    except (ValueError, AttributeError):
-                        pass  # Invalid format, no reward
-        
-        return total_reward, local_rewards
+        """Rewarding is disabled for this environment."""
+        return 0.0
 
 
     def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
@@ -1272,51 +1214,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             for var_name, value in sorted(self.assignment.items()):
                 logger.info("  %s: %s", var_name, value)
 
-        joint_reward, agent_rewards = self._rewards(self.assignment)
-        ratio = joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0
-        logger.info("Current Joint Reward: %.2f (ratio %.2f%%)", joint_reward, ratio * 100.0)
-
-        # Track scores for every iteration
-        self._track_scores(iteration, joint_reward, agent_rewards)
-
-    def _track_scores(self, iteration: int, joint_reward: float, agent_rewards: Dict[str, float]) -> None:
-        """Track scores and write logs."""
-        import json
-        from datetime import datetime
-
-        # Update score histories
-        self.joint_reward_history.append(joint_reward)
-        for agent, reward in agent_rewards.items():
-            if agent in self.agent_rewards_history:
-                self.agent_rewards_history[agent].append(reward)
-
-        # Create logs directory with seed subdirectory
-        # Get tag_model subdirectory
-        tag_model = get_tag_model_subdir(self.full_config)
-        log_dir = build_log_dir(self.__class__.__name__, tag_model, self.current_seed, self.run_timestamp)
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Log scores to JSON
-        score_entry = {
-            "environment": self.__class__.__name__,
-            "iteration": iteration,
-            "timestamp": datetime.now().isoformat(),
-            "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_joint_reward,
-            "max_joint_reward": self.max_joint_reward,
-            "agent_rewards": agent_rewards,
-            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards),
-            "model_info": extract_model_info(self.full_config),
-            "full_config": self.full_config,
-            "total_agents": len(agent_rewards),
-            "variables_assigned": len(self.assignment),
-            "total_variables": len(self.problem.variables),
-        }
-
-        data_file = log_dir / f"data_iteration_{iteration}.json"
-        with open(data_file, "w") as f:
-            json.dump(score_entry, f, indent=2, ensure_ascii=False)
-
     def get_final_summary(self) -> Dict[str, Any]:
         """Get a final summary of the entire simulation."""
         total_vars = len(self.problem.variables)
@@ -1330,13 +1227,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "final_attendance_decisions": final_attendance_decisions,
             }
 
-        joint_reward, agent_rewards = self._rewards(self.assignment)
         return {
             "status": "complete",
-            "joint_reward": joint_reward,
-            "joint_reward_ratio": joint_reward / self.max_joint_reward if self.max_joint_reward else 0.0,
-            "average_agent_reward": sum(agent_rewards.values()) / len(agent_rewards) if agent_rewards else 0.0,
-            "agent_rewards": agent_rewards,
             "attendance": self.assignment.copy(),
             "total_variables": total_vars,
             "variables_assigned": len(self.assignment),
@@ -1361,7 +1253,6 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "participants": list(meeting.participants),
                 "start":        0,
                 "end":          total_slots,
-                "meeting_type": "soft",
             }
 
         # Include graph_api config so tools can use it without a direct env reference
@@ -1449,6 +1340,4 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             response: The response dictionary to potentially modify
         """
         if "attendance" in state_updates:
-            joint_reward = self.joint_reward(self.assignment)
-            if "result" in response:
-                response["result"]["joint_reward"] = joint_reward
+            return
