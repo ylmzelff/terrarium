@@ -3,11 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence
+import sys
 
 import networkx as nx
 
+# Python 3.10+ supports slots parameter in dataclass
+# For compatibility with Python 3.8+, conditionally use it
+_DATACLASS_KWARGS = {"frozen": True}
+if sys.version_info >= (3, 10):
+    _DATACLASS_KWARGS["slots"] = True
 
-@dataclass(frozen=True, slots=True)
+@dataclass(**_DATACLASS_KWARGS)
 class CommunicationNetwork:
     """A NetworkX-backed communication network.
 

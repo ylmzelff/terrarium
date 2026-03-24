@@ -1298,6 +1298,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
           - submitted_arrays: agent binary availability arrays (from submit_availability_array)
             When all participants of a meeting have submitted, OT is triggered automatically.
         """
+        logger.info(f"📥 apply_state_updates called with keys: {list(state_updates.keys())}")
+        
         # ── Attendance updates (attend_meeting) ───────────────────────────
         if "attendance" in state_updates:
             self.assignment.update(state_updates["attendance"])
@@ -1305,6 +1307,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # ── Submitted availability arrays (submit_availability_array) ─────
         if "submitted_arrays" in state_updates:
             incoming = state_updates["submitted_arrays"]
+            logger.info(f"📨 Processing submitted_arrays: {list(incoming.keys())}")
             # incoming = { meeting_id: { agent_name: [0, 1, ...] } }
             for meeting_id, agent_arrays in incoming.items():
                 if meeting_id not in self._submitted_arrays:
@@ -1317,6 +1320,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 submitted    = self._submitted_arrays[meeting_id]
                 all_done     = all(p in submitted for p in participants)
 
+                logger.info(f"   Meeting {meeting_id}: participants={participants}, submitted={list(submitted.keys())}, all_done={all_done}")
+                
                 if all_done:
                     logger.info("🔒 All arrays received for %s → running OT", meeting_id)
                     self.meeting_availabilities[meeting_id] = {p: submitted[p] for p in participants}
