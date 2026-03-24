@@ -407,6 +407,34 @@ class BlackboardLogger:
                     if "reason" in payload:
                         formatted += f"  Agent Reason: \"{payload['reason']}\"\n"
         
+        elif event_kind == "action_executed":
+            action_type = payload.get("action_type", "unknown")
+            result_status = payload.get("result_status", "unknown")
+            action_params = payload.get("action_params", {})
+            details = payload.get("details", {})
+            result_data = details.get("result", {}) if isinstance(details, dict) else {}
+
+            formatted += f"  Action: {action_type}\n"
+            formatted += f"  Status: {result_status}\n"
+
+            if action_type == "attend_meeting":
+                meeting_id = action_params.get("meeting_id", "?")
+                slot_index = action_params.get("slot_index", action_params.get("interval", "?"))
+                formatted += f"  Meeting_ID: {meeting_id}\n"
+                formatted += f"  Chosen_Slot_Index: {slot_index}\n"
+                if isinstance(result_data, dict):
+                    meeting_info = result_data.get("meeting", {})
+                    if meeting_info:
+                        formatted += f"  Meeting_Title: {meeting_info.get('title', '?')}\n"
+                        formatted += f"  Participants: {meeting_info.get('participants', [])}\n"
+                    remaining = result_data.get("remaining_variables", "?")
+                    formatted += f"  Remaining_Variables: {remaining}\n"
+            else:
+                # Generic action_executed — show action params
+                for key, value in action_params.items():
+                    if key != "action" and value is not None:
+                        formatted += f"  {key}: {value}\n"
+
         elif event_kind == "inventory_update":
             # Specific handling for inventory updates
             if "message" in payload:
