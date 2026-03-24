@@ -1267,6 +1267,15 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         if not use_real_calendars:
             simulated_availability = self._simulated_availability_cache
 
+        # Expose OT intersections (if already computed) so execution tool can enforce
+        # scheduling at the earliest common slot.
+        meeting_intersections = self._meeting_intersections_cache or {}
+        earliest_common_slots: Dict[str, int] = {}
+        for meeting_id, intersection in meeting_intersections.items():
+            common_indices = [i for i, v in enumerate(intersection) if v == 1]
+            if common_indices:
+                earliest_common_slots[meeting_id] = common_indices[0]
+
         return {
             "meetings":     meetings,
             "attendance":   self.assignment.copy(),
@@ -1276,6 +1285,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "graph_api":    graph_api,
             "use_real_calendars": use_real_calendars,
             "simulated_availability": simulated_availability,
+            "meeting_intersections": meeting_intersections,
+            "earliest_common_slots": earliest_common_slots,
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:
@@ -1306,7 +1317,7 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 submitted    = self._submitted_arrays[meeting_id]
                 all_done     = all(p in submitted for p in participants)
 
-                if all_done and meeting_id not in self.meeting_availabilities:
+                if all_done:
                     logger.info("🔒 All arrays received for %s → running OT", meeting_id)
                     self.meeting_availabilities[meeting_id] = {p: submitted[p] for p in participants}
                     self._meeting_intersections_cache = None  # force OT re-run

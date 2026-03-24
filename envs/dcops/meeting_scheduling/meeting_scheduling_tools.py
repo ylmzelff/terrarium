@@ -147,6 +147,22 @@ class MeetingSchedulingTools:
     ) -> Dict[str, Any]:
         logger.info("🛠  Tool dispatch | agent=%s | tool=%s | phase=%s", agent_name, tool_name, phase)
 
+        # Strict phase gating prevents bypassing OT flow in execution phase.
+        if phase:
+            allowed_tool_names = {
+                tool.get("function", {}).get("name")
+                for tool in self.get_tools(phase)
+                if tool.get("function", {}).get("name")
+            }
+            if allowed_tool_names and tool_name not in allowed_tool_names:
+                return {
+                    "status": "retry",
+                    "reason": (
+                        f"Tool '{tool_name}' is not allowed during phase '{phase}'. "
+                        f"Allowed tools: {sorted(allowed_tool_names)}"
+                    ),
+                }
+
         if tool_name == "fetch_my_calendar":
             return self._handle_fetch_my_calendar(agent_name, arguments, env_state)
         if tool_name == "submit_availability_array":
@@ -244,6 +260,38 @@ class MeetingSchedulingTools:
             except Exception as exc:
                 logger.warning("Could not log fetch event to blackboard: %s", exc)
 
+            # In simulation mode, array is already fully known (no parsing needed).
+            # Auto-submit to environment via state_updates so OT can run as soon as
+            # both participants have fetched their calendars.
+            if meeting_id not in self._submitted_arrays:
+                self._submitted_arrays[meeting_id] = {}
+            self._submitted_arrays[meeting_id][agent_name] = list(agent_slots)
+
+            meetings     = env_state.get("meetings", {})
+            meeting_info = meetings.get(meeting_id, {})
+            participants = meeting_info.get("participants", list(self._submitted_arrays[meeting_id].keys()))
+            submitted    = self._submitted_arrays[meeting_id]
+            waiting_for  = [p for p in participants if p not in submitted]
+
+            state_updates = {
+                "submitted_arrays": {
+                    meeting_id: dict(submitted)
+                }
+            }
+
+            if waiting_for:
+                auto_submit_note = (
+                    f"Simulation mode: your generated array was auto-submitted. "
+                    f"Waiting for {waiting_for} before OT runs."
+                )
+                auto_submit_status = "waiting_for_other_agent"
+            else:
+                auto_submit_note = (
+                    "Simulation mode: both arrays are now submitted. "
+                    "OT intersection computation has been triggered."
+                )
+                auto_submit_status = "all_submitted_ot_triggered"
+
             return {
                 "meeting_id": meeting_id,
                 "agent":      agent_name,
@@ -265,6 +313,13 @@ class MeetingSchedulingTools:
                     f"Then call: submit_availability_array(meeting_id='{meeting_id}', "
                     f"availability=[...{total_slots} values...])"
                 ),
+                "auto_submit": {
+                    "enabled": True,
+                    "status": auto_submit_status,
+                    "message": auto_submit_note,
+                    "waiting_for": waiting_for,
+                },
+                "state_updates": state_updates,
             }
 
         # ────────────────────────────────────────────────────────────────
@@ -556,6 +611,41 @@ class MeetingSchedulingTools:
                 "suggestions": [f"Valid examples: {sample}"],
             }
 
+        # Enforce OT result usage: if intersection exists, agent must pick the earliest
+        # common slot for that meeting.
+        meeting_intersections = env_state.get("meeting_intersections", {}) if env_state else {}
+        intersection = meeting_intersections.get(meeting_id)
+        if intersection is not None:
+            common_slots = [i for i, v in enumerate(intersection) if v == 1]
+            if common_slots:
+                chosen_start = int(normalized_interval.split("-")[0])
+                earliest = common_slots[0]
+                if chosen_start != earliest:
+                    return {
+                        "status": "retry",
+                        "reason": (
+                            f"You must choose the earliest OT intersection slot. "
+                            f"Earliest={earliest}, but got {chosen_start}."
+                        ),
+                        "suggestions": [f"Use interval='{earliest}'"],
+                    }
+            else:
+                return {
+                    "status": "retry",
+                    "reason": (
+                        "OT intersection has no common slot for this meeting. "
+                        "Do not schedule attendance for this meeting."
+                    ),
+                }
+        else:
+            return {
+                "status": "retry",
+                "reason": (
+                    "OT intersection is not available yet for this meeting. "
+                    "Complete planning (array submission/OT) before attend_meeting."
+                ),
+            }
+
         updated_attendance = dict(attendance)
         updated_attendance[var_name] = normalized_interval
 
@@ -573,6 +663,7 @@ class MeetingSchedulingTools:
                     "window": [start, end],
                     "participants": participants,
                 },
+                "slot_index": int(str(interval).strip().split("-")[0]),
                 "interval": normalized_interval,
                 "total_assigned": len(updated_attendance),
                 "remaining_variables": int(total_vars) - len(updated_attendance),
@@ -580,7 +671,14 @@ class MeetingSchedulingTools:
             },
         }
 
-        action = {"action": "attend_meeting", "meeting_id": meeting_id, "interval": interval}
+        # Extract raw slot index for clear logging
+        raw_slot = str(interval).strip().split("-")[0]
+        action = {
+            "action": "attend_meeting",
+            "meeting_id": meeting_id,
+            "slot_index": int(raw_slot) if raw_slot.isdigit() else raw_slot,
+            "interval": interval,
+        }
         if self.blackboard_manager:
             self.blackboard_manager.log_action_to_blackboards(
                 agent_name, action, result, phase, iteration
