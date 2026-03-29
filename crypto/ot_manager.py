@@ -103,12 +103,20 @@ class OTManager:
         for j in range(p_size):
             slot_idx = receiver_preferences[0][j]
             retrieved = pyot.retreive(res_h[0][j], j, r[0], receiver_preferences[0])
-            
-            # Check if slot is in common (compare decrypted value with sender's message)
-            match = str(retrieved) == sender_messages[slot_idx]
-            
-            if match:
+
+            # OT encoding contract in this module:
+            # - sender available slot i  -> message "i"
+            # - sender busy slot         -> message "-1"
+            # A slot is common iff decrypted value equals the queried slot index.
+            retrieved_str = str(retrieved).strip()
+            if retrieved_str == str(slot_idx):
                 intersection.append(slot_idx)
+            elif retrieved_str != "-1":
+                logger.warning(
+                    "Unexpected OT decrypted value for slot %s: %s",
+                    slot_idx,
+                    retrieved_str,
+                )
         
         final_intersection = sorted(intersection)
         
