@@ -148,6 +148,10 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                     self._generate_simulated_availability(meeting.participants)
                 )
 
+        # Anchor datetime: slot 0 = midnight of today; used to map slot index → real datetime
+        from datetime import datetime as _dt
+        self._calendar_start_dt = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
         logger.info("%s initialized with %s agents", self.__class__.__name__, len(self.agent_names))
         logger.info("Agent Names: %s", ", ".join(self.agent_names))
         logger.info("Total meetings to schedule: %s", len(self.meetings))
@@ -1287,6 +1291,8 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             "simulated_availability": simulated_availability,
             "meeting_intersections": meeting_intersections,
             "earliest_common_slots": earliest_common_slots,
+            # Anchor for slot → real datetime mapping (slot 0 = midnight of this day)
+            "calendar_start_dt": self._calendar_start_dt.isoformat(),
         }
 
     def apply_state_updates(self, state_updates: Dict[str, Any]) -> None:

@@ -1,0 +1,30 @@
+# Core dependencies
+anthropic>=0.71.0
+fastmcp>=2.12.5
+matplotlib==3.10.7
+mcp>=1.18.0
+networkx>=3.3
+numpy>=1.26,<2.3
+Pillow>=12.0.0
+protobuf>=6.33.0
+python-dotenv>=1.1.1
+PyYAML>=6.0.3
+Requests>=2.32.5
+torch>=2.6.0
+tqdm>=4.66.4
+openai
+vllm==0.12.0
+
+# Microsoft Graph API (for real calendar integration)
+msal>=1.31.0
+pytz>=2024.1
+
+# Crypto module build dependencies
+pybind11>=2.10.0
+
+# Hugging Face Transformers (for local LLM models)
+transformers>=4.35.0
+accelerate>=0.25.0
+
+# Additional utilities
+openpyxl>=3.1.0  # For Excel output in benchmark scripts

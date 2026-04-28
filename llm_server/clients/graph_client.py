@@ -111,7 +111,7 @@ class GraphAPIClient:
     """
     
     GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
-    SCOPES = ["Calendars.Read", "User.Read"]
+    SCOPES = ["Calendars.ReadWrite", "User.Read", "OnlineMeetings.ReadWrite"]
     
     def __init__(
         self,
@@ -301,6 +301,7 @@ class GraphAPIClient:
         Raises:
             Exception: If API call fails
         """
+        import requests  # lazy import (msal/requests validated in __init__)
         token = self._ensure_valid_token(email)
         
         tz = timezone or self.timezone
@@ -537,6 +538,7 @@ class GraphAPIClient:
         Raises:
             Exception: If API call fails
         """
+        import requests  # lazy import (msal/requests validated in __init__)
         token = self._ensure_valid_token(organizer_email)
         
         tz = timezone or self.timezone
@@ -732,6 +734,7 @@ class GraphAPIClient:
         }
 
     def get_events(self, email: str, start_datetime: datetime, end_datetime: datetime, timezone: Optional[str] = None) -> list:
+        import requests  # lazy import (msal/requests validated in __init__)
         token = self._ensure_valid_token(email)
         tz = timezone or self.timezone
         headers = {

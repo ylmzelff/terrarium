@@ -684,7 +684,186 @@ class MeetingSchedulingTools:
                 agent_name, action, result, phase, iteration
             )
 
+        # ── Production mode: create Teams meeting when all participants decided ──
+        # Check if every participant of THIS meeting has now committed an attendance.
+        # We use updated_attendance (not yet applied to env) to catch completion here.
+        if env_state and env_state.get("use_real_calendars"):
+            meeting_vars_decided = sum(
+                1 for p in participants
+                if f"{p}__{meeting_id}" in updated_attendance
+            )
+            if meeting_vars_decided == len(participants) and participants:
+                chosen_slot = int(normalized_interval.split("-")[0])
+                teams_result = self._finalize_meeting_with_teams_link(
+                    meeting_id=meeting_id,
+                    slot_index=chosen_slot,
+                    participants=participants,
+                    meeting_title=meeting.get("title", meeting_id),
+                    env_state=env_state,
+                )
+                if teams_result:
+                    result["result"]["teams_meeting"] = teams_result
+
         return result
+
+    # ── Teams meeting creation (production mode) ───────────────────────────
+
+    def _finalize_meeting_with_teams_link(
+        self,
+        meeting_id: str,
+        slot_index: int,
+        participants: List[str],
+        meeting_title: str,
+        env_state: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a Teams online meeting for the agreed slot and post the join link
+        to all relevant blackboards.
+
+        Called from _handle_attend_meeting when ALL participants of a meeting have
+        committed their attendance and use_real_calendars=True.
+
+        Returns:
+            Dict with status/join_url/start/etc., or None on unrecoverable failure.
+        """
+        from datetime import datetime, timedelta
+
+        # ── 1. Map slot index → real datetime ────────────────────────────
+        calendar_start_dt_str = env_state.get("calendar_start_dt")
+        if not calendar_start_dt_str:
+            logger.warning(
+                "calendar_start_dt missing from env_state — cannot map slot %d to real datetime",
+                slot_index,
+            )
+            return None
+
+        try:
+            calendar_start_dt = datetime.fromisoformat(calendar_start_dt_str)
+        except ValueError:
+            logger.warning("Invalid calendar_start_dt: %s", calendar_start_dt_str)
+            return None
+
+        slot_start = calendar_start_dt + timedelta(hours=slot_index)
+        slot_end = slot_start + timedelta(hours=1)
+
+        # ── 2. Build attendee email list ──────────────────────────────────
+        graph_config = env_state.get("graph_api", {})
+        agent_emails = graph_config.get("agent_emails", {})
+        timezone = graph_config.get("timezone", "UTC")
+        attendees = [email for p in participants if (email := agent_emails.get(p))]
+
+        if not attendees:
+            logger.warning(
+                "No attendee emails found in graph_api.agent_emails for %s — "
+                "skipping Teams meeting creation",
+                participants,
+            )
+            return None
+
+        # ── 3. Require live Graph API client on env ───────────────────────
+        if not (self.env and hasattr(self.env, "_graph_client")):
+            logger.warning(
+                "No _graph_client on env — skipping Teams meeting creation. "
+                "Ensure use_real_calendars=true and async_init() ran successfully."
+            )
+            return None
+
+        organizer_email = attendees[0]
+
+        # ── 4. Create the Teams meeting ───────────────────────────────────
+        try:
+            logger.info(
+                "📅 Creating Teams meeting: '%s' | slot=%d | %s → %s | attendees=%s",
+                meeting_title, slot_index,
+                slot_start.isoformat(), slot_end.isoformat(), attendees,
+            )
+            meeting_result = self.env._graph_client.create_teams_meeting(
+                subject=meeting_title,
+                start_datetime=slot_start,
+                end_datetime=slot_end,
+                attendees=attendees,
+                timezone=timezone,
+                organizer_email=organizer_email,
+                body=(
+                    f"This meeting was automatically scheduled by the Terrarium multi-agent "
+                    f"system using the privacy-preserving Oblivious Transfer (OT) protocol.\n\n"
+                    f"Agreed slot  : {slot_index}\n"
+                    f"Date / Time  : "
+                    f"{slot_start.strftime('%A, %B %d %Y at %H:%M')} ({timezone})"
+                ),
+            )
+        except Exception as exc:
+            logger.error("❌ Failed to create Teams meeting: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+        join_url = meeting_result.get("join_url", "")
+        web_link = meeting_result.get("web_link", "")
+
+        logger.info("✅ Teams meeting created | join_url=%s", join_url)
+
+        # ── 5. Post the Teams join link to all relevant blackboards ───────
+        teams_payload: Dict[str, Any] = {
+            "message": (
+                f"📅 MEETING SCHEDULED (OT Protocol)\n"
+                f"   Meeting  : {meeting_title} ({meeting_id})\n"
+                f"   Slot     : {slot_index} → "
+                f"{slot_start.strftime('%A, %B %d %Y at %H:%M')} ({timezone})\n"
+                f"   Attendees: {', '.join(participants)}\n"
+                f"🔗 Teams Join URL: {join_url}"
+            ),
+            "meeting_id": meeting_id,
+            "slot_index": slot_index,
+            "start_datetime": slot_start.isoformat(),
+            "end_datetime": slot_end.isoformat(),
+            "timezone": timezone,
+            "join_url": join_url,
+            "web_link": web_link,
+            "attendees": attendees,
+        }
+
+        try:
+            for bb in self.blackboard_manager.blackboards:
+                bb_agents = getattr(bb, "agents", set())
+                if any(p in bb_agents for p in participants):
+                    self.blackboard_manager.post_system_message(
+                        blackboard_id=bb.blackboard_id,
+                        kind="teams_meeting_created",
+                        payload=teams_payload,
+                    )
+                    logger.info(
+                        "📌 Teams link posted to blackboard %d", bb.blackboard_id
+                    )
+        except Exception as exc:
+            logger.warning("Could not post Teams link to blackboard: %s", exc)
+
+        # ── 6. Console output so the operator can see the result ──────────
+        print(f"\n{'='*80}")
+        print("🎉 TEAMS MEETING CREATED SUCCESSFULLY!")
+        print(f"{'-'*80}")
+        print(f"   Meeting  : {meeting_title} ({meeting_id})")
+        print(f"   Date/Time: {slot_start.strftime('%A, %B %d %Y at %H:%M')} ({timezone})")
+        print(f"   Slot     : {slot_index}")
+        print(f"   Attendees: {', '.join(attendees)}")
+        print(f"   Join URL : {join_url}")
+        if web_link:
+            print(f"   Web Link : {web_link}")
+        print(f"{'='*80}\n")
+
+        return {
+            "status": "created",
+            "meeting_id": meeting_id,
+            "start": slot_start.isoformat(),
+            "end": slot_end.isoformat(),
+            "timezone": timezone,
+            "join_url": join_url,
+            "web_link": web_link,
+            "attendees": attendees,
+            "message": (
+                f"Teams meeting created! "
+                f"{slot_start.strftime('%A, %B %d %Y at %H:%M')} ({timezone}). "
+                f"Join URL: {join_url}"
+            ),
+        }
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
