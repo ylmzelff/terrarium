@@ -1,1 +1,0 @@
-# TODO: Finish this after getting sequential and base refactored and perfect
