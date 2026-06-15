@@ -313,16 +313,17 @@ def main(sizes: list[int], num_runs: int, run_ot: bool) -> None:
               if r["ot_status"] in ("success", "skipped")
               and r["plain_status"] == "success"]
         if ok:
-            def _mean(lst): return sum(lst) / len(lst)
+            def _mean(lst): return sum(lst) / len(lst) if lst else 0.0
             print(f"\n  Summary ({len(ok)}/{num_runs} ok):")
             if run_ot:
-                print(f"    OT   e2e : {_mean([r['ot_e2e_s'] for r in ok]):.3f}s  "
+                print(f"    OT   e2e : {_mean([r['ot_e2e_s'] for r in ok if r['ot_e2e_s'] is not None]):.3f}s  "
                       f"crypto: {_mean([r['ot_crypto_s'] for r in ok]):.4f}s")
-            print(f"    PLAIN e2e: {_mean([r['plain_e2e_s'] for r in ok]):.3f}s  "
+            print(f"    PLAIN e2e: {_mean([r['plain_e2e_s'] for r in ok if r['plain_e2e_s'] is not None]):.3f}s  "
                   f"crypto: {_mean([r['plain_crypto_s'] for r in ok]):.6f}s")
-            if run_ot and ok[0]["overhead_pct"] is not None:
-                print(f"    Overhead : {_mean([r['overhead_s'] for r in ok if r['overhead_s']]):.4f}s  "
-                      f"({_mean([r['overhead_pct'] for r in ok if r['overhead_pct']]):.2f}%)")
+            if run_ot:
+                overheads = [r['overhead_s'] for r in ok if r['overhead_s'] is not None]
+                overhead_pcts = [r['overhead_pct'] for r in ok if r['overhead_pct'] is not None]
+                print(f"    Overhead : {_mean(overheads):.4f}s  ({_mean(overhead_pcts):.2f}%)")
 
     # ── CSV ──────────────────────────────────────────────────────────────────
     if not all_rows:
