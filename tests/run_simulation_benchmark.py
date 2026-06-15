@@ -45,6 +45,7 @@ KNOWN_MODELS = {
     "llama":   "meta-llama/Llama-3.1-8B-Instruct",
     "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
     "phi":     "microsoft/Phi-3.5-mini-instruct",
+    "gemma":   "google/gemma-2-2b-it",
 }
 
 
