@@ -55,12 +55,13 @@ class MeetingSchedulingPrompts:
             OT protocol runs automatically once both agents have submitted.
             The intersection result will appear in the blackboard."""
         else:
-            planning_steps = """PLANNING PHASE — 1 step:
+            planning_steps = """PLANNING PHASE — 1 step (MANDATORY):
 
-  → Call submit_availability_array(meeting_id='<meeting_id>')
-    Do NOT include an availability array — it is injected automatically.
+  → You MUST call submit_availability_array(meeting_id='<meeting_id>')
+    Do NOT include an availability array parameter — omit it entirely.
     Do NOT call fetch_my_calendar.
-    OT protocol runs automatically once both agents have submitted."""
+    YOU MUST make this tool call — it does NOT happen automatically.
+    OT protocol runs automatically AFTER both agents call this tool."""
 
         base_prompt = f"""You are an autonomous agent in a privacy-preserving meeting scheduling system.
 
@@ -191,17 +192,18 @@ RULES:
             else:
                 # Simulation mode: array is injected server-side, LLM only sends meeting_id
                 context_parts.extend([
-                    "SIMULATION MODE: Your availability array is all zeros and will be submitted automatically.",
-                    "Do NOT call fetch_my_calendar. Do NOT pass an availability array.",
+                    "ACTION REQUIRED: You MUST call submit_availability_array for each meeting below.",
+                    "Do NOT pass an availability array — omit that parameter entirely.",
+                    "Do NOT call fetch_my_calendar.",
                     "",
                 ])
                 for meeting in self.env.meetings:
                     context_parts.append(
-                        f"  submit_availability_array(meeting_id='{meeting.meeting_id}')"
+                        f"  CALL NOW → submit_availability_array(meeting_id='{meeting.meeting_id}')"
                     )
                 context_parts.extend([
                     "",
-                    "OT runs automatically once both agents submit. No further action needed in planning.",
+                    "OT runs automatically AFTER both agents call this tool.",
                     "",
                 ])
         elif phase == "execution":
