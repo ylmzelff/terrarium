@@ -133,14 +133,9 @@ async def run_one(config: dict, use_ot: bool) -> dict:
             from src.server import mcp as _srv
             mcp_client = Client(_srv)
 
-        # Dummy loggers to avoid file I/O variance
-        class _Noop:
-            def __call__(self, *a, **k): return None
-            def __getattr__(self, _): return self
-            def reset_log(self): pass
-
-        tool_logger       = _Noop()
-        trajectory_logger = _Noop()
+        from src.logger import ToolCallLogger, AgentTrajectoryLogger
+        tool_logger       = ToolCallLogger("MeetingSchedulingEnvironment", config["simulation"]["seed"], config, run_timestamp=run_ts)
+        trajectory_logger = AgentTrajectoryLogger("MeetingSchedulingEnvironment", config["simulation"]["seed"], config, run_timestamp=run_ts)
 
         comm = SequentialCommunicationProtocol(config, tool_logger, mcp_client, run_timestamp=run_ts)
         env  = create_environment(comm, "MeetingSchedulingEnvironment", config, tool_logger)
