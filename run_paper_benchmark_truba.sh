@@ -44,16 +44,17 @@ done
 # ── Modules ──────────────────────────────────────────────────────────────────
 echo "Loading modules..."
 module purge 2>/dev/null || true
-module load python/3.10 2>/dev/null || true
 
 # ── Virtual environment ───────────────────────────────────────────────────────
 echo "Activating virtual environment..."
-if [ -d ".venv" ]; then
+if [ -d "terrarium_env" ]; then
+    source terrarium_env/bin/activate
+elif [ -d ".venv" ]; then
     source .venv/bin/activate
 elif [ -d "venv" ]; then
     source venv/bin/activate
 else
-    echo "ERROR: No virtual environment found (.venv or venv)!"
+    echo "ERROR: No virtual environment found (terrarium_env / .venv / venv)!"
     exit 1
 fi
 
