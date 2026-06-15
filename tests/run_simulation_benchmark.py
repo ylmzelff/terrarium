@@ -41,6 +41,7 @@ BASE_CFG = str(PROJECT_ROOT / "examples" / "configs" / "meeting_scheduling.yaml"
 
 KNOWN_MODELS = {
     "qwen":    "Qwen/Qwen2.5-7B-Instruct",
+    "qwen3b":  "Qwen/Qwen2.5-3B-Instruct",
     "llama":   "meta-llama/Llama-3.1-8B-Instruct",
     "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
     "phi":     "microsoft/Phi-3.5-mini-instruct",
