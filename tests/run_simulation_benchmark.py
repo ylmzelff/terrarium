@@ -275,7 +275,7 @@ async def run_pair(size: int, seed: int, run_ot: bool,
 
 def _print_result(r: dict) -> None:
     if r["elapsed"] is not None:
-        print(f"✓ {r['elapsed']:.3f}s (crypto: {r['crypto_time']:.4f}s)")
+        print(f"✓ {r['elapsed']:.3f}s (crypto: {r['crypto_time']:.6f}s)")
     else:
         print(f"✗ {r['status']}: {r.get('error','')[:60]}")
 
@@ -341,16 +341,20 @@ def main(sizes: list[int], num_runs: int, run_ot: bool,
               and r["plain_status"] == "success"]
         if ok:
             def _mean(lst): return sum(lst) / len(lst) if lst else 0.0
+            # Exclude first run (pyot cold-start outlier) from crypto stats if >2 runs
+            ok_excl1 = ok[1:] if len(ok) > 2 else ok
             print(f"\n  Summary ({len(ok)}/{num_runs} ok):")
             if run_ot:
+                ot_crypto_vals = [r['ot_crypto_s'] for r in ok_excl1]
                 print(f"    OT   e2e : {_mean([r['ot_e2e_s'] for r in ok if r['ot_e2e_s'] is not None]):.3f}s  "
-                      f"crypto: {_mean([r['ot_crypto_s'] for r in ok]):.4f}s")
+                      f"crypto: {_mean(ot_crypto_vals):.6f}s  (excl. cold-start)")
+            plain_crypto_vals = [r['plain_crypto_s'] for r in ok_excl1]
             print(f"    PLAIN e2e: {_mean([r['plain_e2e_s'] for r in ok if r['plain_e2e_s'] is not None]):.3f}s  "
-                  f"crypto: {_mean([r['plain_crypto_s'] for r in ok]):.6f}s")
+                  f"crypto: {_mean(plain_crypto_vals):.6f}s")
             if run_ot:
                 overheads = [r['overhead_s'] for r in ok if r['overhead_s'] is not None]
                 overhead_pcts = [r['overhead_pct'] for r in ok if r['overhead_pct'] is not None]
-                print(f"    Overhead : {_mean(overheads):.4f}s  ({_mean(overhead_pcts):.2f}%)")
+                print(f"    Overhead : {_mean(overheads):.6f}s  ({_mean(overhead_pcts):.4f}%)")
 
     # ── CSV ──────────────────────────────────────────────────────────────────
     if not all_rows:
@@ -386,22 +390,24 @@ def main(sizes: list[int], num_runs: int, run_ot: bool,
 
     def _mean(lst): return sum(x for x in lst if x is not None) / max(1, sum(1 for x in lst if x is not None))
 
-    print(f"\n{'Size':>6} | {'OT E2E':>10} | {'Plain E2E':>10} | {'OT Crypto':>10} | {'Plain Crypto':>13} | {'Overhead%':>10} | {'N':>4}")
-    print("─" * 80)
+    print(f"\n{'Size':>6} | {'OT E2E':>10} | {'Plain E2E':>10} | {'OT Crypto (s)':>14} | {'Plain Crypto (s)':>17} | {'Overhead (s)':>13} | {'N':>4}")
+    print("─" * 90)
     for size in sorted(by_size):
         rows = [r for r in by_size[size] if r["plain_status"] == "success"]
         if not rows:
             continue
+        # Exclude first run from crypto stats (cold-start outlier)
+        rows_excl1 = rows[1:] if len(rows) > 2 else rows
         print(
             f"{size:6d} | "
             f"{_mean([r['ot_e2e_s'] for r in rows]):10.3f} | "
             f"{_mean([r['plain_e2e_s'] for r in rows]):10.3f} | "
-            f"{_mean([r['ot_crypto_s'] for r in rows]):10.4f} | "
-            f"{_mean([r['plain_crypto_s'] for r in rows]):13.6f} | "
-            f"{_mean([r['overhead_pct'] for r in rows if r['overhead_pct']]):9.2f}% | "
+            f"{_mean([r['ot_crypto_s'] for r in rows_excl1]):14.6f} | "
+            f"{_mean([r['plain_crypto_s'] for r in rows_excl1]):17.6f} | "
+            f"{_mean([r['overhead_s'] for r in rows_excl1 if r['overhead_s'] is not None]):13.6f} | "
             f"{len(rows):4d}"
         )
-    print("=" * 80)
+    print("=" * 90)
 
 
 if __name__ == "__main__":
