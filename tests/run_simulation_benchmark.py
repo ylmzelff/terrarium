@@ -286,6 +286,16 @@ def main(sizes: list[int], num_runs: int, run_ot: bool) -> None:
     print(f"Runs per size: {num_runs}  |  OT: {run_ot}")
     print("=" * 80)
 
+    # ── Warmup: load the LLM model before benchmark starts ───────────────────
+    print("\n[warmup] Loading LLM model (not counted in results)...")
+    try:
+        warmup_cfg = build_config(sizes[0], seed=99)
+        asyncio.run(run_one(copy.deepcopy(warmup_cfg), use_ot=False))
+        print("[warmup] Done.\n")
+    except Exception as exc:
+        print(f"[warmup] Failed (non-fatal): {exc}\n")
+    gc.collect()
+
     all_rows: list[dict] = []
 
     for size in sizes:
