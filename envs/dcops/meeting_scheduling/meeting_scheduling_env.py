@@ -139,6 +139,9 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         # Cache for meeting intersections (computed once via OT, reused everywhere)
         self._meeting_intersections_cache: Optional[Dict] = None
 
+        # Cumulative time spent inside the crypto step (OT or plain AND) across all meetings
+        self.crypto_time_s: float = 0.0
+
         # Pre-generate and cache simulated availability (deterministic via seed)
         # Used when use_real_calendars=False so tools return consistent data
         self._simulated_availability_cache: Dict[str, Dict[str, List[int]]] = {}
@@ -307,28 +310,20 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
 
     def _generate_availability_for_meeting(self, participants: List[str]) -> Dict[str, List[int]]:
         """
-        Generate availability arrays for meeting participants.
-        
-        This is the main entry point for availability generation. It dispatches to either:
-        - Simulation mode (_generate_simulated_availability): Controlled test data
-        - Production mode (_fetch_real_availability): Real Outlook calendars via Graph API
-        
-        Mode is controlled by 'use_real_calendars' config parameter.
-        
+        Generate simulated availability arrays for meeting participants (init-time only).
+
+        In production mode (use_real_calendars=True) calendar data is fetched at
+        runtime via the fetch_my_calendar agent tool, so this method only runs in
+        simulation mode.
+
         Args:
             participants: List of agent names participating in this meeting
-            
+
         Returns:
-            Dictionary mapping agent names to their availability lists for this meeting
+            Dictionary mapping agent names to their simulated availability lists
         """
-        use_real_calendars = self.env_config.get("use_real_calendars", False)
-        
-        if use_real_calendars:
-            logger.info("📅 Production mode: Fetching real availability from Microsoft Graph API")
-            return self._fetch_real_availability(participants)
-        else:
-            logger.info("🔬 Simulation mode: Generating controlled test availability")
-            return self._generate_simulated_availability(participants)
+        logger.info("🔬 Simulation mode: Generating controlled test availability")
+        return self._generate_simulated_availability(participants)
     
     def _generate_simulated_availability(self, participants: List[str]) -> Dict[str, List[int]]:
         """
@@ -449,269 +444,15 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
         
         return availability
 
-    def _fetch_real_availability(self, participants: List[str]) -> Dict[str, List[int]]:
-        """
-        Fetch REAL availability from Microsoft Outlook calendars via Graph API.
-        
-        FAILS HARD: If anything goes wrong (missing email, API error, etc.),
-        a RuntimeError is raised and the simulation stops. No silent fallbacks.
-        
-        Args:
-            participants: List of agent names participating in this meeting
-            
-        Returns:
-            Dictionary mapping agent names to their availability lists
-            
-        Raises:
-            RuntimeError: If ANY agent's calendar cannot be fetched
-        """
-        from datetime import datetime, timedelta
-        from src.availability import AvailabilityConstants
-        
-        try:
-            from llm_server.clients.graph_client import GraphAPIClient
-        except ImportError as exc:
-            raise RuntimeError(
-                "❌ SIMULATION STOPPED: Graph API dependencies missing.\n"
-                "   Run: pip install msal requests pytz"
-            ) from exc
-        
-        # Graph client should already be initialized in async_init
-        if not hasattr(self, '_graph_client'):
-            try:
-                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
-            except Exception as e:
-                raise RuntimeError(
-                    f"❌ SIMULATION STOPPED: Failed to initialize Graph API client: {e}"
-                ) from e
-        
-        # Get agent email mapping
-        graph_config = self.env_config.get("graph_api", {})
-        agent_emails = graph_config.get("agent_emails", {})
-        
-        # Calculate time window
-        start_datetime = datetime.now()
-        end_datetime = start_datetime + timedelta(days=self.num_days)
-        
-        availability = {}
-        total_slots = self.num_days * self.slots_per_day
-        
-        for agent_name in participants:
-            email = agent_emails.get(agent_name)
-            
-            if not email:
-                raise RuntimeError(
-                    f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
-                    f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
-                )
-            
-            # Fetch availability — NO try/except fallback, let it crash
-            logger.info(f"📅 Fetching availability for {agent_name} ({email})...")
-            
-            raw_availability = self._graph_client.get_availability(
-                email=email,
-                start_datetime=start_datetime,
-                end_datetime=end_datetime,
-                interval_minutes=60
-            )
-            
-            # Convert Graph API response to our slot format
-            slots = self._convert_graph_availability_to_slots(
-                raw_availability,
-                total_slots
-            )
-            
-            availability[agent_name] = slots
-            
-            available_count = sum(slots)
-            logger.info(f"  ✅ {agent_name}: {available_count}/{total_slots} available slots")
-        
-        return availability
-    
-    def _convert_graph_availability_to_slots(
-        self,
-        raw_availability: List[Dict],
-        total_slots: int
-    ) -> List[int]:
-        """
-        Convert Graph API availability response to binary slot array.
-        
-        Graph API returns:
-        [
-            {"start": "2026-02-21T09:00:00", "end": "2026-02-21T10:00:00", "status": "free"},
-            {"start": "2026-02-21T10:00:00", "end": "2026-02-21T11:00:00", "status": "busy"},
-            ...
-        ]
-        
-        We convert to: [1, 0, ...] where 1=available, 0=busy
-        
-        Args:
-            raw_availability: List of time slots with status from Graph API
-            total_slots: Expected total number of slots
-            
-        Returns:
-            Binary availability array
-        """
-        from src.availability import AvailabilityConstants
-        
-        slots = []
-        
-        for slot_data in raw_availability[:total_slots]:
-            status = slot_data.get("status", "busy")
-            
-            # Map Graph API status to our binary format
-            # "free" = available (1), everything else = busy (0)
-            is_available = status == "free"
-            
-            slots.append(
-                AvailabilityConstants.AVAILABLE if is_available
-                else AvailabilityConstants.BUSY
-            )
-        
-        # Pad with busy slots if Graph API returned fewer slots than expected
-        while len(slots) < total_slots:
-            slots.append(AvailabilityConstants.BUSY)
-        
-        return slots[:total_slots]  # Trim if too many
-
     # ─────────────────────────────────────────────────────────────────────
-    # Agentic Tools — called by MeetingSchedulingTools handlers
+    # NOTE: fetch_calendar_for_agent, _fetch_real_availability, and
+    # _convert_graph_availability_to_slots have been removed (duplicate).
+    # Real-calendar fetching is handled exclusively by the fetch_my_calendar
+    # agent tool at runtime:
+    #   meeting_scheduling_tools._handle_fetch_my_calendar
+    #     → GraphAPIClient.fetch_raw_calendar
+    # The env no longer pre-fetches calendars during initialisation.
     # ─────────────────────────────────────────────────────────────────────
-
-    def fetch_calendar_for_agent(self, agent_name: str, meeting_id: str) -> Dict[str, Any]:
-        """
-        Called by the fetch_my_calendar tool.
-
-        Returns the agent's calendar events so they can build their availability array.
-        - If use_real_calendars=False: Returns pre-generated simulated availability
-        - If use_real_calendars=True: Fetches real Outlook/Teams calendar via Graph API
-
-        Returns a dict the LLM receives as tool output:
-          {
-            "events":      [ {"slot_index": ..., "start": ..., "end": ..., "status": "free"|"busy"}, ... ],
-            "slot_info":   { "total_slots": 120, "slot_duration_minutes": 60, ... },
-            "instructions": "..."
-          }
-        """
-        from datetime import datetime, timedelta
-        
-        use_real_calendars = self.env_config.get("use_real_calendars", False)
-        total_slots = self.num_days * self.slots_per_day
-        
-        if use_real_calendars:
-            # ════════════════════════════════════════════════════════════════
-            # REAL CALENDARS MODE: Fetch from Microsoft Graph API
-            # ════════════════════════════════════════════════════════════════
-            graph_config = self.env_config.get("graph_api", {})
-            agent_emails = graph_config.get("agent_emails", {})
-            email = agent_emails.get(agent_name)
-
-            if not email:
-                raise RuntimeError(
-                    f"❌ SIMULATION STOPPED: No email configured for agent '{agent_name}'.\n"
-                    f"   Add it under environment.graph_api.agent_emails.{agent_name} in YAML."
-                )
-
-            # Lazy-init Graph API client (should already exist from async_init)
-            if not hasattr(self, "_graph_client"):
-                from llm_server.clients.graph_client import GraphAPIClient
-                self._graph_client = GraphAPIClient.from_yaml(self.full_config)
-                logger.info("✅ Graph API client initialised from YAML config for agentic tool flow.")
-
-            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            end_dt   = start_dt + timedelta(days=self.num_days)
-
-            logger.info("📅 [%s] Fetching REAL calendar from Graph API (%s → %s)", 
-                        agent_name, start_dt.date(), end_dt.date())
-            
-            raw_slots = self._graph_client.get_availability(
-                email=email,
-                start_datetime=start_dt,
-                end_datetime=end_dt,
-                interval_minutes=60,
-            )
-
-            # Convert to event list
-            events = [
-                {
-                    "slot_index": i,
-                    "start":  s["start"],
-                    "end":    s["end"],
-                    "status": s["status"],   # "free" | "busy"
-                }
-                for i, s in enumerate(raw_slots)
-            ]
-
-            busy_count = sum(1 for e in events if e["status"] == "busy")
-            logger.info("📋 [%s] Returned %d REAL calendar slots (%d busy, %d free) for meeting %s",
-                        agent_name, len(events), busy_count, len(events) - busy_count, meeting_id)
-        
-        else:
-            # ════════════════════════════════════════════════════════════════
-            # SIMULATION MODE: Return pre-generated random availability
-            # ════════════════════════════════════════════════════════════════
-            logger.info("🔬 [%s] Returning SIMULATED calendar for meeting %s", 
-                        agent_name, meeting_id)
-            
-            # Get simulated availability from cache (generated during __init__)
-            if meeting_id not in self._simulated_availability_cache:
-                raise RuntimeError(
-                    f"❌ No simulated availability cached for meeting {meeting_id}. "
-                    f"This should have been generated during __init__."
-                )
-            
-            agent_availability = self._simulated_availability_cache[meeting_id].get(agent_name)
-            if agent_availability is None:
-                raise RuntimeError(
-                    f"❌ No simulated availability for agent {agent_name} in meeting {meeting_id}"
-                )
-            
-            # Convert binary array to event list format (same as Graph API)
-            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            
-            events = []
-            for slot_idx, is_available in enumerate(agent_availability):
-                slot_start = start_dt + timedelta(hours=slot_idx)
-                slot_end = slot_start + timedelta(hours=1)
-                
-                events.append({
-                    "slot_index": slot_idx,
-                    "start": slot_start.isoformat(),
-                    "end": slot_end.isoformat(),
-                    "status": "free" if is_available == 1 else "busy",
-                })
-            
-            busy_count = sum(1 for e in events if e["status"] == "busy")
-            logger.info("📋 [%s] Returned %d SIMULATED slots (%d busy, %d free) for meeting %s",
-                        agent_name, len(events), busy_count, len(events) - busy_count, meeting_id)
-
-        # ════════════════════════════════════════════════════════════════
-        # Return same format regardless of mode
-        # ════════════════════════════════════════════════════════════════
-        return {
-            "meeting_id": meeting_id,
-            "agent":      agent_name,
-            "events":     events,
-            "slot_info": {
-                "total_slots":           total_slots,
-                "slots_per_day":         self.slots_per_day,
-                "num_days":              self.num_days,
-                "slot_duration_minutes": 60,
-                "work_hours":            "09:00–18:00 (slots outside this range are always busy)",
-            },
-            "instructions": (
-                "Build a binary availability array of length "
-                f"{total_slots} (= {self.num_days} days × {self.slots_per_day} slots/day). "
-                "Rules:\n"
-                "  • 1 = you are FREE at that slot\n"
-                "  • 0 = you are BUSY at that slot\n"
-                "  • Slots outside 09:00–18:00 work hours → always 0\n"
-                "  • Slots where status='busy' → 0\n"
-                "  • Slots where status='free' AND within work hours → 1\n"
-                "After building the array, call submit_availability_array("
-                f"meeting_id='{meeting_id}', availability=[...]) with your array."
-            ),
-        }
 
     def submit_availability_array(
         self,
@@ -769,13 +510,33 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 "message":     f"Array saved. Waiting for {waiting_for} to also submit.",
             }
 
-        # ── All participants submitted → run OT ───────────────────────────
+        # ── All participants submitted → run OT (only if arrays changed) ──
+        new_arrays = {p: submitted[p] for p in participants}
+        cached_arrays = self.meeting_availabilities.get(meeting_id, {})
+        arrays_changed = new_arrays != cached_arrays
+
+        if self._meeting_intersections_cache is not None and not arrays_changed:
+            # Cache is valid — return cached result without re-running OT
+            logger.info("⚡ Skipping OT for %s — cache valid, arrays unchanged", meeting_id)
+            cached = self._meeting_intersections_cache.get(meeting_id, [])
+            common_indices = [i for i, v in enumerate(cached) if v == AvailabilityConstants.AVAILABLE]
+            return {
+                "status":         "ot_complete",
+                "meeting_id":     meeting_id,
+                "common_slots":   len(common_indices),
+                "intersection":   cached,
+                "common_indices": common_indices,
+                "message": (
+                    f"OT already computed. {len(common_indices)} common slots found. "
+                    "The intersection has been posted to the shared blackboard. "
+                    "Coordinate with the other agent to select the EARLIEST common slot (smallest index)."
+                ),
+            }
+
         logger.info("🔒 All participants submitted → running OT for meeting %s", meeting_id)
 
         # Populate meeting_availabilities so existing OT/blackboard code works unchanged
-        self.meeting_availabilities[meeting_id] = {
-            p: submitted[p] for p in participants
-        }
+        self.meeting_availabilities[meeting_id] = new_arrays
         # Invalidate intersection cache so OT re-runs with new data
         self._meeting_intersections_cache = None
 
@@ -909,11 +670,12 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
             logger.info("⚙️  Executing OT phases: Setup → GenQuery → GenRes → oblFilter → Retrieve")
             
             start_time = time.time()
-            
+
             # OT returns intersection indices directly (NO fallback, NO classical AND)
             common_indices = compute_private_intersection(sender_availability, receiver_availability, total_slots)
-            
+
             ot_duration = time.time() - start_time
+            self.crypto_time_s += ot_duration
             
             # Convert indices back to slot array
             intersection = [AvailabilityConstants.BUSY] * total_slots
@@ -1329,9 +1091,18 @@ class MeetingSchedulingEnvironment(AbstractEnvironment):
                 logger.info(f"   Meeting {meeting_id}: participants={participants}, submitted={list(submitted.keys())}, all_done={all_done}")
                 
                 if all_done:
+                    # Only run OT if cache is empty or arrays have changed since last run
+                    new_arrays = {p: submitted[p] for p in participants}
+                    cached_arrays = self.meeting_availabilities.get(meeting_id, {})
+                    arrays_changed = new_arrays != cached_arrays
+
+                    if self._meeting_intersections_cache is not None and not arrays_changed:
+                        logger.info("⚡ Skipping OT for %s — cache valid, arrays unchanged", meeting_id)
+                        continue
+
                     logger.info("🔒 All arrays received for %s → running OT", meeting_id)
-                    self.meeting_availabilities[meeting_id] = {p: submitted[p] for p in participants}
-                    self._meeting_intersections_cache = None  # force OT re-run
+                    self.meeting_availabilities[meeting_id] = new_arrays
+                    self._meeting_intersections_cache = None
 
                     try:
                         self._generate_meeting_intersections()

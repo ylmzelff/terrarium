@@ -124,12 +124,17 @@ class MeetingSchedulingTools:
 
     # ── Tool Discovery ─────────────────────────────────────────────────────
 
-    def get_tool_names(self) -> Set[str]:
-        return {"fetch_my_calendar", "submit_availability_array", "attend_meeting"}
+    def get_tool_names(self, use_real_calendars: bool = False) -> Set[str]:
+        names = {"submit_availability_array", "attend_meeting"}
+        if use_real_calendars:
+            names.add("fetch_my_calendar")
+        return names
 
-    def get_tools(self, phase: str) -> List[Dict[str, Any]]:
+    def get_tools(self, phase: str, use_real_calendars: bool = False) -> List[Dict[str, Any]]:
         if phase == "planning":
-            return [_FETCH_MY_CALENDAR_SCHEMA, _SUBMIT_AVAILABILITY_SCHEMA]
+            if use_real_calendars:
+                return [_FETCH_MY_CALENDAR_SCHEMA, _SUBMIT_AVAILABILITY_SCHEMA]
+            return [_SUBMIT_AVAILABILITY_SCHEMA]
         if phase == "execution":
             return [_ATTEND_MEETING_SCHEMA]
         return []
@@ -323,16 +328,17 @@ class MeetingSchedulingTools:
             }
 
         # ────────────────────────────────────────────────────────────────
-        # PRODUCTION MODE — fetch RAW Teams/Outlook events from Graph API
-        # The code ONLY fetches raw data. The LLM reads the events and
-        # builds the binary availability array by itself.
-        # Credentials come ONLY from YAML (graph_api block in env_state)
-        # FAILS HARD: any error → RuntimeError → simulation stops
+        # PRODUCTION MODE — fetch events from Graph API and deterministically
+        # build the binary availability vector in code (not delegated to LLM).
+        # Credentials come ONLY from YAML (graph_api block in env_state).
+        # FAILS HARD: any error → RuntimeError → simulation stops.
         # ────────────────────────────────────────────────────────────────
-        graph_config   = env_state.get("graph_api", {})
-        agent_emails   = graph_config.get("agent_emails", {})
-        email          = agent_emails.get(agent_name)
-        timezone       = graph_config.get("timezone", "Turkey Standard Time")
+        graph_config = env_state.get("graph_api", {})
+        agent_emails = graph_config.get("agent_emails", {})
+        email        = agent_emails.get(agent_name)
+        timezone     = graph_config.get("timezone", "Turkey Standard Time")
+        work_hour_start = int(graph_config.get("work_hour_start", 9))
+        work_hour_end   = int(graph_config.get("work_hour_end", 18))
 
         if not email:
             raise RuntimeError(
@@ -357,7 +363,6 @@ class MeetingSchedulingTools:
         start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt   = start_dt + timedelta(days=num_days)
 
-        # Fetch RAW calendar data — code does NOT compute slots
         logger.info("📅 [%s] fetch_raw_calendar | %s | %s → %s",
                     agent_name, email, start_dt.date(), end_dt.date())
         raw_data = self._graph_client.fetch_raw_calendar(
@@ -373,9 +378,7 @@ class MeetingSchedulingTools:
         logger.info("📋 [%s] %d raw events fetched from Teams/Outlook | meeting=%s",
                     agent_name, len(raw_events), meeting_id)
 
-        # -------------------------------------------------------------------
-        # Pretty console print for debugging (so the user can see what the LLM sees)
-        # -------------------------------------------------------------------
+        # ── Pretty console print for debugging ───────────────────────────
         print(f"\n{'='*80}")
         print(f"🗓️  [{agent_name}] CALENDAR EVENTS FETCHED FROM GRAPH API")
         print(f"{'-'*80}")
@@ -383,46 +386,188 @@ class MeetingSchedulingTools:
             print("   (No events found in this date range)")
         else:
             for i, evt in enumerate(raw_events):
-                subj   = evt.get('subject', 'No Subject') or 'No Subject'
-                start  = evt.get('start', '')
-                end    = evt.get('end', '')
-                showAs = str(evt.get('showAs', '')).upper()
-                start_dt_str = start[:16].replace("T", " ") if len(start) >= 16 else start
-                end_dt_str   = end[:16].replace("T", " ") if len(end) >= 16 else end
+                subj         = evt.get("subject", "No Subject") or "No Subject"
+                ev_start     = evt.get("start", "")
+                ev_end       = evt.get("end", "")
+                showAs       = str(evt.get("showAs", "")).upper()
+                start_dt_str = ev_start[:16].replace("T", " ") if len(ev_start) >= 16 else ev_start
+                end_dt_str   = ev_end[:16].replace("T", " ")   if len(ev_end)   >= 16 else ev_end
                 print(f"   {i+1:02d}. {start_dt_str} → {end_dt_str} | {showAs:9} | {subj}")
         print(f"{'='*80}\n")
 
+        # ── Deterministically build the binary availability vector ────────
+        # This replaces the previous approach of delegating slot construction
+        # to the LLM. The algorithm is now fully deterministic and consistent
+        # with the pseudocode in Algorithm 1.
+        availability = self._build_availability_vector(
+            raw_events=raw_events,
+            start_dt=start_dt,
+            num_days=num_days,
+            slots_per_day=slots_per_day,
+            work_hour_start=work_hour_start,
+            work_hour_end=work_hour_end,
+        )
+
+        free_count = sum(availability)
+        available_indices = [i for i, v in enumerate(availability) if v == 1]
+        logger.info(
+            "✅ [%s] Availability vector built | free=%d/%d | meeting=%s",
+            agent_name, free_count, total_slots, meeting_id,
+        )
+
+        # ── Auto-submit (mirrors simulation mode behaviour) ───────────────
+        if meeting_id not in self._submitted_arrays:
+            self._submitted_arrays[meeting_id] = {}
+        self._submitted_arrays[meeting_id][agent_name] = availability
+
+        # ── Log fetch + build event to blackboard ─────────────────────────
+        try:
+            self.blackboard_manager.post_system_message(
+                blackboard_id=0,
+                kind="agent_fetch_calendar",
+                payload={
+                    "message": f"[STEP] {agent_name} fetched and processed calendar for meeting {meeting_id}",
+                    "agent": agent_name,
+                    "meeting_id": meeting_id,
+                    "mode": "production",
+                    "total_slots": total_slots,
+                    "free_slots": free_count,
+                    "busy_slots": total_slots - free_count,
+                    "generated_array": availability,
+                    "available_indices": available_indices,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Could not log fetch event to blackboard: %s", exc)
+
+        meetings     = env_state.get("meetings", {})
+        meeting_info = meetings.get(meeting_id, {})
+        participants = meeting_info.get("participants", list(self._submitted_arrays[meeting_id].keys()))
+        submitted    = self._submitted_arrays[meeting_id]
+        waiting_for  = [p for p in participants if p not in submitted]
+
+        state_updates = {"submitted_arrays": {meeting_id: dict(submitted)}}
+
+        if waiting_for:
+            auto_submit_note   = (
+                f"Production mode: availability vector computed from Graph API data and auto-submitted. "
+                f"Waiting for {waiting_for} before OT runs."
+            )
+            auto_submit_status = "waiting_for_other_agent"
+        else:
+            auto_submit_note   = (
+                "Production mode: both arrays are now submitted. "
+                "OT intersection computation has been triggered."
+            )
+            auto_submit_status = "all_submitted_ot_triggered"
 
         return {
-            "meeting_id": meeting_id,
-            "agent":      agent_name,
-            "user":       user_info,
-            "raw_events": raw_events,
+            "meeting_id":  meeting_id,
+            "agent":       agent_name,
+            "user":        user_info,
             "slot_info": {
                 "total_slots":           total_slots,
                 "slots_per_day":         slots_per_day,
                 "num_days":              num_days,
                 "slot_duration_minutes": 60,
                 "date_range":            f"{start_dt.date()} to {(end_dt - timedelta(days=1)).date()}",
+                "work_hours":            f"{work_hour_start:02d}:00\u2013{work_hour_end:02d}:00",
             },
-            "instructions": (
-                "You received your RAW calendar events from Microsoft Teams/Outlook.\n"
-                "Now YOU must build a binary availability array.\n\n"
-                "RULES:\n"
-                f"  • Array length MUST be EXACTLY {total_slots} (= {num_days} days × {slots_per_day} slots/day)\n"
-                "  • Each slot = 1 hour, starting from 00:00 of the first day\n"
-                "  • Slot 0 = Day1 00:00–01:00, Slot 1 = Day1 01:00–02:00, ..., Slot 9 = Day1 09:00–10:00, etc.\n"
-                "  • Work hours: 09:00–18:00 (slots outside this = 0)\n\n"
-                "HOW TO BUILD THE ARRAY:\n"
-                "  1. Start with all slots = 0\n"
-                "  2. For slots within 09:00–18:00 work hours: set to 1 (available)\n"
-                "  3. For each event in raw_events where showAs='busy' or 'tentative':\n"
-                "     Find which slot(s) overlap with the event time → set those to 0\n"
-                "  4. Slots outside 09:00–18:00 remain 0\n\n"
-                f"Then call: submit_availability_array(meeting_id='{meeting_id}', "
-                f"availability=[...{total_slots} values...])"
-            ),
+            "availability_summary": {
+                "free_slots":       free_count,
+                "busy_slots":       total_slots - free_count,
+                "available_indices": available_indices,
+            },
+            "auto_submit": {
+                "enabled":     True,
+                "status":      auto_submit_status,
+                "message":     auto_submit_note,
+                "waiting_for": waiting_for,
+            },
+            "state_updates": state_updates,
         }
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Availability Vector Builder (production mode helper)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _build_availability_vector(
+        self,
+        raw_events: List[Dict[str, Any]],
+        start_dt,
+        num_days: int,
+        slots_per_day: int,
+        work_hour_start: int = 9,
+        work_hour_end: int = 18,
+    ) -> List[int]:
+        """
+        Deterministically convert raw Graph API calendar events into a binary
+        availability vector of length N = num_days × slots_per_day.
+
+        Algorithm (mirrors Algorithm 1 pseudocode exactly):
+          1. Initialise Aa ← [0] * N
+          2. For every slot i whose hour falls within [work_hour_start, work_hour_end)
+             set Aa[i] = 1  (initially available during working hours)
+          3. For each event ek where showAs ≠ 'free',
+             find all slots Ii = [si, si+Δ) that overlap with [ek.start, ek.end)
+             and set Aa[i] = 0  (mark as busy)
+
+        Args:
+            raw_events:       List of event dicts with 'start', 'end', 'showAs' keys
+                              (ISO-8601 strings, e.g. "2026-05-21T09:00:00")
+            start_dt:         datetime representing the beginning of slot 0 (day 0, 00:00)
+            num_days:         Number of scheduling days (D)
+            slots_per_day:    Number of 1-hour slots per day (S)
+            work_hour_start:  First available hour of the working day (inclusive), default 9
+            work_hour_end:    Last available hour of the working day (exclusive), default 18
+
+        Returns:
+            Binary list of length N = num_days × slots_per_day.
+        """
+        from datetime import datetime, timedelta
+
+        total_slots = num_days * slots_per_day
+        delta = timedelta(hours=1)  # Δ — slot duration
+
+        # Step 1 — Initialise: Aa ← 0^N
+        availability: List[int] = [0] * total_slots
+
+        # Step 2 — Mark working-hour slots as initially available
+        for i in range(total_slots):
+            slot_hour = (i % slots_per_day)  # hour of the day for slot i
+            if work_hour_start <= slot_hour < work_hour_end:
+                availability[i] = 1
+
+        # Step 3 — Override with busy events
+        # For each event ek where showAs ≠ 'free', find overlapping slots and set to 0.
+        busy_statuses = {"busy", "tentative", "oof", "workingElsewhere"}
+
+        for evt in raw_events:
+            show_as = str(evt.get("showAs", "busy")).lower()
+            if show_as == "free":
+                continue  # event does not block availability
+
+            ev_start_str = evt.get("start", "")
+            ev_end_str   = evt.get("end", "")
+            if not ev_start_str or not ev_end_str:
+                continue
+
+            try:
+                # Strip timezone suffix for naive comparison (Graph API may include 'Z' or offset)
+                ev_start = datetime.fromisoformat(ev_start_str.replace("Z", "+00:00").split("+")[0])
+                ev_end   = datetime.fromisoformat(ev_end_str.replace("Z", "+00:00").split("+")[0])
+            except ValueError:
+                logger.warning("Skipping event with unparseable time: %s", evt)
+                continue
+
+            # Find all slots that overlap: ek.start < si + Δ  AND  ek.end > si
+            for i in range(total_slots):
+                si      = start_dt + timedelta(hours=i)
+                si_next = si + delta
+                if ev_start < si_next and ev_end > si:
+                    availability[i] = 0
+
+        return availability
 
     # ─────────────────────────────────────────────────────────────────────
     # Planning Tool 2: submit_availability_array
@@ -476,26 +621,10 @@ class MeetingSchedulingTools:
             meeting_id, agent_name, free_count, total_slots,
         )
 
-        # -------------------------------------------------------------------
-        # Pretty console print to show the matrix the LLM built
-        # -------------------------------------------------------------------
-        print(f"\n{'='*80}")
-        print(f"🧠 [{agent_name}] LLM GENERATED BINARY ARRAY (Meeting: {meeting_id})")
-        print(f"{'-'*80}")
-        # Print a header row like 00 01 02 ... 23
-        header = "      " + " ".join(f"{hr:02d}" for hr in range(min(slots_per_day, 24)))
-        print(header)
-        
-        # Determine actual days based on array length just in case
-        actual_days = len(availability) // slots_per_day
-        for day in range(actual_days):
-            s_idx = day * slots_per_day
-            e_idx = s_idx + slots_per_day
-            day_slots = availability[s_idx:e_idx]
-            slot_str  = "  ".join(str(x) for x in day_slots)
-            print(f"Day {day+1}: {slot_str}")
-            
-        print(f"{'='*80}\n")
+        logger.debug(
+            "[%s] submitted array for meeting=%s | free=%d/%d",
+            agent_name, meeting_id, free_count, total_slots,
+        )
 
         # ── Log submit event to blackboard ──
         try:
@@ -618,31 +747,33 @@ class MeetingSchedulingTools:
         if intersection is not None:
             common_slots = [i for i, v in enumerate(intersection) if v == 1]
             if common_slots:
-                chosen_start = int(normalized_interval.split("-")[0])
+                # Common slots exist — agent must pick the earliest one
+                chosen_start = int(normalized_interval.split("-")[0]) if normalized_interval != "skip" else -1
                 earliest = common_slots[0]
-                if chosen_start != earliest:
+                if normalized_interval == "skip" or chosen_start != earliest:
                     return {
                         "status": "retry",
                         "reason": (
-                            f"You must choose the earliest OT intersection slot. "
-                            f"Earliest={earliest}, but got {chosen_start}."
+                            f"Common slots exist. You must attend the earliest one. "
+                            f"Use interval='{earliest}'."
                         ),
                         "suggestions": [f"Use interval='{earliest}'"],
                     }
             else:
-                return {
-                    "status": "retry",
-                    "reason": (
-                        "OT intersection has no common slot for this meeting. "
-                        "Do not schedule attendance for this meeting."
-                    ),
-                }
+                # No common slots — only 'skip' is valid
+                if normalized_interval != "skip":
+                    return {
+                        "status": "retry",
+                        "reason": "No common slots found. Use interval='skip'.",
+                        "suggestions": ["Use interval='skip'"],
+                    }
+                # 'skip' with no common slots → fall through to success
         else:
             return {
                 "status": "retry",
                 "reason": (
-                    "OT intersection is not available yet for this meeting. "
-                    "Complete planning (array submission/OT) before attend_meeting."
+                    "OT intersection is not available yet. "
+                    "Complete planning (submit availability array) before attend_meeting."
                 ),
             }
 

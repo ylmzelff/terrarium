@@ -4,13 +4,13 @@ Bu benchmark suite, privacy-preserving **Oblivious Transfer (OT)** protokolü il
 
 ## 📋 Dosyalar
 
-| Dosya | Açıklama |
-|-------|----------|
-| `benchmark_ot_timing.py` | Sadece OT protokol timing testi |
-| `benchmark_plain_timing.py` | Sadece plain AND timing testi (baseline) |
-| `compare_benchmarks.py` | İki test sonucunu karşılaştırır |
-| `benchmark_ot_vs_plain.py` | Birleşik benchmark (legacy, optional) |
-| `benchmark_ot_vs_plain.ipynb` | Google Colab notebook |
+| Dosya                         | Açıklama                                 |
+| ----------------------------- | ---------------------------------------- |
+| `benchmark_ot_timing.py`      | Sadece OT protokol timing testi          |
+| `benchmark_plain_timing.py`   | Sadece plain AND timing testi (baseline) |
+| `compare_benchmarks.py`       | İki test sonucunu karşılaştırır          |
+| `benchmark_ot_vs_plain.py`    | Birleşik benchmark (legacy, optional)    |
+| `benchmark_ot_vs_plain.ipynb` | Google Colab notebook                    |
 
 ## 🚀 Kullanım
 
@@ -33,6 +33,7 @@ python tests/compare_benchmarks.py
 ```
 
 Bu script:
+
 - `tests/results/ot_timing_results.json` okur
 - `tests/results/plain_timing_results.json` okur
 - Karşılaştırma tablosu yazdırır
@@ -89,12 +90,12 @@ python tests/compare_benchmarks.py --no-plot
 
 Her iki test de 4 farklı pattern destekler:
 
-| Pattern | Açıklama | Örnek (size=8) |
-|---------|----------|----------------|
-| `zeros` | Tüm slotlar busy (worst case intersection) | `[0,0,0,0,0,0,0,0]` |
-| `ones` | Tüm slotlar available (best case intersection) | `[1,1,1,1,1,1,1,1]` |
-| `alternating` | Dönüşümlü pattern (no intersection) | Agent A: `[1,0,1,0,1,0,1,0]`<br>Agent B: `[0,1,0,1,0,1,0,1]` |
-| `random` | Rastgele binary array | `[1,0,1,1,0,0,1,0]` |
+| Pattern       | Açıklama                                       | Örnek (size=8)                                               |
+| ------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| `zeros`       | Tüm slotlar busy (worst case intersection)     | `[0,0,0,0,0,0,0,0]`                                          |
+| `ones`        | Tüm slotlar available (best case intersection) | `[1,1,1,1,1,1,1,1]`                                          |
+| `alternating` | Dönüşümlü pattern (no intersection)            | Agent A: `[1,0,1,0,1,0,1,0]`<br>Agent B: `[0,1,0,1,0,1,0,1]` |
+| `random`      | Rastgele binary array                          | `[1,0,1,1,0,0,1,0]`                                          |
 
 ## 📈 Çıktı Dosyaları
 
@@ -104,7 +105,7 @@ Tüm sonuçlar `tests/results/` klasörüne kaydedilir:
 tests/results/
 ├── ot_timing_results.json       # OT test sonuçları
 ├── ot_timing_results.csv
-├── plain_timing_results.json    # Plain test sonuçları  
+├── plain_timing_results.json    # Plain test sonuçları
 ├── plain_timing_results.csv
 ├── comparison_results.csv       # Karşılaştırma tablosu
 └── comparison_plot.png          # Grafikler
@@ -171,6 +172,7 @@ Her iki test de aynı boyutları kullanır (senin belirttiğin boyutlar):
 ## 🛠️ Troubleshooting
 
 ### OT module bulunamıyor
+
 ```powershell
 cd crypto
 python setup.py install
@@ -178,12 +180,15 @@ cd ..
 ```
 
 ### Matplotlib yok
+
 ```powershell
 pip install matplotlib
 ```
 
 ### Results klasörü yok
+
 Otomatik oluşturulur, ama manuel de oluşturabilirsin:
+
 ```powershell
 mkdir tests\results
 ```

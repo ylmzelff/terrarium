@@ -14,13 +14,13 @@ environment:
   # use_real_calendars: Use real Outlook/Teams via Microsoft Graph API
   # false = Simulation mode (default, no Azure setup needed)
   # true  = Production mode (requires Azure App Registration + M365 account)
-  use_real_calendars: true
+  use_real_calendars: false
 
-  num_days: 5
-  slots_per_day: 24
+  num_days: 1
+  slots_per_day: 32
   num_meetings: 1
-  availability_rate: 0.4 # fraction of slots randomly marked available (simulation mode)
-  intersections: 3 # guaranteed common slots in simulation mode
+  availability_rate: 0.0   # 0.0 = all-zero arrays (benchmark mode)
+  intersections: 0          # no guaranteed common slots
 
   # ========== MICROSOFT GRAPH API ==========
   # These settings are used when use_real_calendars: true

@@ -2,11 +2,17 @@
 plain_intersection.py
 =====================
 Privacy-FREE baseline for meeting-slot intersection.
-Uses Python's array module (not list) for results.
+Uses numpy for fast vectorised AND; falls back to pure Python if numpy unavailable.
 """
 from __future__ import annotations
 import array
 from typing import List
+
+try:
+    import numpy as np
+    _NUMPY = True
+except ImportError:
+    _NUMPY = False
 
 
 def plain_intersection(
@@ -21,6 +27,12 @@ def plain_intersection(
         raise ValueError(
             f"Array uzunluklari esit olmali: {len(agent_a)} != {len(agent_b)}"
         )
+    if _NUMPY:
+        a = np.array(agent_a, dtype=np.int8)
+        b = np.array(agent_b, dtype=np.int8)
+        indices = np.where(a & b)[0]
+        return array.array('i', indices.tolist())
+    # fallback: pure Python
     result = array.array('i')
     for idx, (a, b) in enumerate(zip(agent_a, agent_b)):
         if a == 1 and b == 1:

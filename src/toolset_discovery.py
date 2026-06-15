@@ -9,6 +9,7 @@ from envs.dcops.meeting_scheduling.meeting_scheduling_tools import MeetingSchedu
 class ToolsetDiscovery:
     def __init__(self):
         self.meeting_tools = MeetingSchedulingTools(blackboard_manager=None, env=None)
+        self._use_real_calendars: bool = False
 
         self._tools_by_environment = {
             "MeetingSchedulingEnvironment": self.meeting_tools,
@@ -21,8 +22,11 @@ class ToolsetDiscovery:
         Call this once after the environment is fully constructed.
         """
         self.meeting_tools.env = env
-        logger.info("🔗 ToolsetDiscovery: env reference wired into MeetingSchedulingTools (%s)",
-                    type(env).__name__)
+        self._use_real_calendars = bool(
+            getattr(env, "env_config", {}).get("use_real_calendars", False)
+        )
+        logger.info("🔗 ToolsetDiscovery: env wired (%s) use_real_calendars=%s",
+                    type(env).__name__, self._use_real_calendars)
 
 
     def get_tools_for_environment(self, environment_name: str, phase: str) -> List[Dict[str, Any]]:
@@ -36,7 +40,7 @@ class ToolsetDiscovery:
         tools = self._tools_by_environment.get(environment_name)
         if not tools:
             return []
-        return tools.get_tools(phase)
+        return tools.get_tools(phase, use_real_calendars=self._use_real_calendars)
 
     def get_env_tool_names(self, environment_name: str) -> Set[str]:
         """
@@ -48,7 +52,7 @@ class ToolsetDiscovery:
         tools = self._tools_by_environment.get(environment_name)
         if not tools:
             return set()
-        return tools.get_tool_names()
+        return tools.get_tool_names(use_real_calendars=self._use_real_calendars)
 
     def get_blackboard_tool_names(self) -> Set[str]:
         """

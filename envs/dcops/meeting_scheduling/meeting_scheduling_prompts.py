@@ -40,47 +40,43 @@ class MeetingSchedulingPrompts:
         )
 
     def get_system_prompt(self) -> str:
-        base_prompt = """You are a fully autonomous agent in a meeting scheduling system.
+        use_real = self.env.env_config.get("use_real_calendars", False)
 
-YOUR GOAL: Schedule the meeting at the EARLIEST common available time slot.
-
-PHASES:
-
-=== PLANNING PHASE — AGENTIC CALENDAR FLOW ===
-You must complete ALL 5 steps in order:
+        if use_real:
+            planning_steps = """PLANNING PHASE — 2 steps:
 
   STEP 1 → Call fetch_my_calendar(meeting_id)
-           This fetches your RAW calendar events from Microsoft Teams/Outlook.
-           You will receive a list of events with: subject, start, end, showAs, isOnlineMeeting.
+            Returns your calendar events (subject, start, end, showAs).
+            Work hours: 09:00–18:00. Slots outside work hours = 0.
+            Busy/tentative event overlaps a work-hour slot → 0. Otherwise → 1.
 
-  STEP 2 → Read the raw events carefully. YOU must determine your availability:
-           - Each slot = 1 hour (slot 0 = 00:00–01:00, slot 9 = 09:00–10:00, etc.)
-           - Work hours are 09:00–18:00 → slots outside this range = 0 (unavailable)
-           - For each work-hour slot: if NO event overlaps with showAs='busy' → 1 (free)
-           - If an event overlaps and showAs='busy' or 'tentative' → 0 (busy)
+  STEP 2 → Call submit_availability_array(meeting_id, availability=[...])
+            Submit a binary array of exactly (num_days × slots_per_day) integers.
+            OT protocol runs automatically once both agents have submitted.
+            The intersection result will appear in the blackboard."""
+        else:
+            planning_steps = """PLANNING PHASE — 1 step:
 
-  STEP 3 → Build a binary array of EXACTLY (num_days × slots_per_day) values.
-           Example: 5 days × 24 slots = 120 values: [0,0,...,1,1,...,0,0,...]
-           Non-work-hour slots are always 0.
+  → Call submit_availability_array(meeting_id, availability=[...])
+    Your availability array is given to you directly in the user prompt.
+    Submit it exactly as provided — do not modify it, do not call fetch_my_calendar.
+    OT protocol runs automatically once both agents have submitted."""
 
-  STEP 4 → Call submit_availability_array(meeting_id, availability=[your array])
-           The system will run the privacy-preserving OT protocol automatically
-           when both participants have submitted.
+        base_prompt = f"""You are an autonomous agent in a privacy-preserving meeting scheduling system.
 
-  STEP 5 → Coordinate via post_message on the shared blackboard.
-           Once OT completes, the common availability table will appear in the blackboard.
-           Agree on the EARLIEST (smallest index) slot where intersection = 1.
+GOAL: Schedule each pending meeting at the EARLIEST common available slot.
 
-=== EXECUTION PHASE ===
-  → Call attend_meeting(meeting_id, interval='SLOT_INDEX') with the agreed slot.
-     Use the SMALLEST index where the meeting intersection row = 1.
-     NEVER use interval='skip' if any common slots exist.
+{planning_steps}
 
-CRITICAL RULES:
-  - You may ONLY fetch YOUR OWN calendar (fetch_my_calendar uses your agent identity)
-  - YOU must interpret raw events and build the binary array — the system does NOT do this for you
-  - Do NOT reveal your raw availability to the other agent (only OT result is shared)
-  - Always respect the 5-step order in planning phase"""
+EXECUTION PHASE — 1 step:
+
+  → Call attend_meeting(meeting_id, interval='SLOT_INDEX')
+    Use the SMALLEST slot index where the intersection shows 1.
+    If no common slots exist, use interval='skip'.
+
+RULES:
+  - Do not post coordination messages; the blackboard updates automatically after OT.
+  - Act immediately — one tool call per step, no extra reasoning."""
 
         system_text = (self.tool_instruction_data or {}).get("system")
         if system_text:
@@ -177,33 +173,39 @@ CRITICAL RULES:
                     context_parts.append("")
 
         if phase == "planning":
-            context_parts.extend(
-                [
-                    "=== CURRENT PHASE: PLANNING ===",
-                    "Follow these 5 steps IN ORDER:",
+            use_real = self.env.env_config.get("use_real_calendars", False)
+            total_slots = self.env.num_days * self.env.slots_per_day
+
+            context_parts.append("=== CURRENT PHASE: PLANNING ===")
+            context_parts.append("")
+
+            if use_real:
+                context_parts.extend([
+                    "  [1] fetch_my_calendar(meeting_id=<meeting_id>)",
+                    "      → Interpret events: work hours 09:00–18:00, busy overlaps = 0, free = 1.",
                     "",
-                    "  [1] Call fetch_my_calendar(meeting_id=<your meeting id>)",
-                    "      → You will receive your RAW calendar events from Teams/Outlook.",
-                    "      → Each event has: subject, start, end, showAs, isOnlineMeeting.",
+                    f"  [2] submit_availability_array(meeting_id=<meeting_id>, availability=[{total_slots} integers])",
+                    "      → OT runs automatically. Intersection appears in blackboard.",
                     "",
-                    "  [2] Read the raw events. YOU must decide your availability:",
-                    "      • Slots are 1-hour long, starting from 00:00",
-                    "      • Work hours: 09:00–18:00 only (outside = 0)",
-                    "      • If a busy event overlaps a work-hour slot → 0",
-                    "      • Otherwise work-hour slot → 1 (free)",
+                ])
+            else:
+                # Simulation mode: all-zero arrays, no fetch needed
+                context_parts.extend([
+                    f"Your availability is all zeros (you have no free slots). Array length: {total_slots}.",
+                    "Do NOT call fetch_my_calendar.",
                     "",
-                    "  [3] Build a binary array of EXACTLY (num_days × slots_per_day) integers.",
-                    "      Example: 5 × 24 = 120 values: [0,0,...,1,1,...,0,0,...]",
+                ])
+                for meeting in self.env.meetings:
+                    context_parts.append(
+                        f"  submit_availability_array("
+                        f"meeting_id='{meeting.meeting_id}', "
+                        f"availability=[0]*{total_slots})"
+                    )
+                context_parts.extend([
                     "",
-                    "  [4] Call submit_availability_array(meeting_id=..., availability=[...])",
-                    "      → OT runs automatically once BOTH agents have submitted.",
-                    "      → The intersection table will appear in the shared blackboard.",
+                    "OT runs automatically once both agents submit. No further action needed in planning.",
                     "",
-                    "  [5] Post a message to the blackboard with post_message:",
-                    "      Tell the other agent which slot (smallest common index) you propose.",
-                    "",
-                ]
-            )
+                ])
         elif phase == "execution":
             context_parts.extend(
                 [
