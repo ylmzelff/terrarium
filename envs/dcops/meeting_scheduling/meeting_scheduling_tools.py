@@ -63,11 +63,11 @@ _SUBMIT_AVAILABILITY_SCHEMA: Dict[str, Any] = {
                     "description": (
                         "Binary array of length equal to total_slots (e.g. 120 for 5 days × 24 slots). "
                         "1 = available, 0 = busy. "
-                        "Mark slots outside working hours (00:00-09:00, 18:00-24:00) as 0."
+                        "In simulation mode this field is ignored — omit it or pass []."
                     ),
                 },
             },
-            "required": ["meeting_id", "availability"],
+            "required": ["meeting_id"],
         },
     },
 }
@@ -591,23 +591,29 @@ class MeetingSchedulingTools:
 
         if not meeting_id:
             return {"error": "'meeting_id' is required."}
-        if availability is None:
-            return {"error": "'availability' array is required."}
-        if not isinstance(availability, list) or not all(v in (0, 1) for v in availability):
-            return {"error": "'availability' must be a list of 0s and 1s."}
 
         # Validate length against env_state
         num_days      = env_state.get("num_days", 5) if env_state else 5
         slots_per_day = env_state.get("slots_per_day", 24) if env_state else 24
         total_slots   = num_days * slots_per_day
+        use_real      = env_state.get("use_real_calendars", True) if env_state else True
 
-        if len(availability) != total_slots:
-            return {
-                "error": (
-                    f"Expected {total_slots} values ({num_days} days × {slots_per_day} slots/day), "
-                    f"got {len(availability)}. Rebuild your array with exactly {total_slots} values."
-                )
-            }
+        # In simulation mode (use_real_calendars=False) the LLM does not need to
+        # generate the full array — we build all-zeros automatically.
+        if not use_real:
+            availability = [0] * total_slots
+        else:
+            if availability is None:
+                return {"error": "'availability' array is required."}
+            if not isinstance(availability, list) or not all(v in (0, 1) for v in availability):
+                return {"error": "'availability' must be a list of 0s and 1s."}
+            if len(availability) != total_slots:
+                return {
+                    "error": (
+                        f"Expected {total_slots} values ({num_days} days × {slots_per_day} slots/day), "
+                        f"got {len(availability)}. Rebuild your array with exactly {total_slots} values."
+                    )
+                }
 
         # Store server-side
         if meeting_id not in self._submitted_arrays:

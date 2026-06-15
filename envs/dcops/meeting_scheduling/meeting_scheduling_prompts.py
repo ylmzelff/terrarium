@@ -57,9 +57,9 @@ class MeetingSchedulingPrompts:
         else:
             planning_steps = """PLANNING PHASE — 1 step:
 
-  → Call submit_availability_array(meeting_id, availability=[...])
-    Your availability array is given to you directly in the user prompt.
-    Submit it exactly as provided — do not modify it, do not call fetch_my_calendar.
+  → Call submit_availability_array(meeting_id='<meeting_id>')
+    Do NOT include an availability array — it is injected automatically.
+    Do NOT call fetch_my_calendar.
     OT protocol runs automatically once both agents have submitted."""
 
         base_prompt = f"""You are an autonomous agent in a privacy-preserving meeting scheduling system.
@@ -189,17 +189,15 @@ RULES:
                     "",
                 ])
             else:
-                # Simulation mode: all-zero arrays, no fetch needed
+                # Simulation mode: array is injected server-side, LLM only sends meeting_id
                 context_parts.extend([
-                    f"Your availability is all zeros (you have no free slots). Array length: {total_slots}.",
-                    "Do NOT call fetch_my_calendar.",
+                    "SIMULATION MODE: Your availability array is all zeros and will be submitted automatically.",
+                    "Do NOT call fetch_my_calendar. Do NOT pass an availability array.",
                     "",
                 ])
                 for meeting in self.env.meetings:
                     context_parts.append(
-                        f"  submit_availability_array("
-                        f"meeting_id='{meeting.meeting_id}', "
-                        f"availability=[0]*{total_slots})"
+                        f"  submit_availability_array(meeting_id='{meeting.meeting_id}')"
                     )
                 context_parts.extend([
                     "",

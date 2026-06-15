@@ -1,33 +1,24 @@
 #!/bin/bash
 #SBATCH --job-name=terrarium-benchmark
-#SBATCH --time=08:00:00
+#SBATCH --partition=kolyoz-cuda
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --output=logs/benchmark_%j.log
+#SBATCH --time=08:00:00
+#SBATCH --output=logs/benchmark_%j.out
 #SBATCH --error=logs/benchmark_%j.err
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TRUBA Simulation Benchmark — OT vs Plain AND (zero arrays)
-# Outputs: tests/results/simulation_benchmark_TIMESTAMP.csv
-# Usage:
-#   sbatch run_paper_benchmark_truba.sh
-#   sbatch run_paper_benchmark_truba.sh --sizes "8 16 32 112" --runs 5
-# ─────────────────────────────────────────────────────────────────────────────
+cd /arf/scratch/egitimg15u2/terrarium
 
-set -e
+source terrarium_env/bin/activate
 
-echo "=================================================="
-echo "Terrarium OT vs Plain Simulation Benchmark"
-echo "Started: $(date)"
-echo "Job ID: ${SLURM_JOB_ID:-local}"
-echo "=================================================="
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONPATH=/arf/scratch/egitimg15u2/terrarium:/arf/scratch/egitimg15u2/terrarium/crypto:$PYTHONPATH
+export PYTHONUNBUFFERED=1
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_ROOT"
-
-# ── Argument parsing ─────────────────────────────────────────────────────────
+# ── Argument parsing ──────────────────────────────────────────────────────────
 SIZES="960 480 448 240 224 112 56 32 16 8"
 RUNS=5
 NO_OT=""
@@ -41,67 +32,36 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Modules ──────────────────────────────────────────────────────────────────
-echo "Loading modules..."
-module purge 2>/dev/null || true
+# ── Build crypto extension ────────────────────────────────────────────────────
+cd crypto
+python3 setup.py build_ext --inplace
+cd ..
 
-# ── Virtual environment ───────────────────────────────────────────────────────
-echo "Activating virtual environment..."
-if [ -d "terrarium_env" ]; then
-    source terrarium_env/bin/activate
-elif [ -d ".venv" ]; then
-    source .venv/bin/activate
-elif [ -d "venv" ]; then
-    source venv/bin/activate
-else
-    echo "ERROR: No virtual environment found (terrarium_env / .venv / venv)!"
-    exit 1
-fi
-
-# ── Environment variables ─────────────────────────────────────────────────────
-export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS=8
-export OPENBLAS_NUM_THREADS=8
-
-# Load .env if present
-if [ -f ".env" ]; then
-    set -a; source .env; set +a
-fi
-
-# ── Output directories ────────────────────────────────────────────────────────
+# ── Output dirs ───────────────────────────────────────────────────────────────
 mkdir -p logs tests/results
 
-# ── Print configuration ───────────────────────────────────────────────────────
-echo ""
-echo "Configuration:"
-echo "  Array sizes : $SIZES"
-echo "  Runs/size   : $RUNS"
-echo "  OT enabled  : $([ -z '$NO_OT' ] && echo yes || echo no)"
-echo "  LLM provider: $(python -c "import yaml; cfg=yaml.safe_load(open('examples/configs/meeting_scheduling.yaml')); print(cfg.get('llm',{}).get('provider','?'))" 2>/dev/null || echo unknown)"
-echo ""
+echo "=================================================="
+echo "Terrarium OT vs Plain Simulation Benchmark"
+echo "Started: $(date)"
+echo "Job ID: ${SLURM_JOB_ID}"
+echo "Sizes: $SIZES | Runs: $RUNS"
+echo "=================================================="
 
 # ── Run benchmark ─────────────────────────────────────────────────────────────
-echo "Starting benchmark..."
-
-python tests/run_simulation_benchmark.py \
+python3 tests/run_simulation_benchmark.py \
     --sizes $SIZES \
     --runs  $RUNS \
     $NO_OT
 
 # ── Verify results ────────────────────────────────────────────────────────────
-echo ""
-echo "Checking results..."
 RESULTS_FILE=$(ls -1t tests/results/simulation_benchmark_*.csv 2>/dev/null | head -1)
 if [ -n "$RESULTS_FILE" ]; then
     echo "Results saved: $RESULTS_FILE"
-    echo "Preview:"
     head -6 "$RESULTS_FILE"
 else
-    echo "WARNING: No simulation_benchmark CSV found. Check logs."
+    echo "WARNING: No results CSV found. Check logs/benchmark_${SLURM_JOB_ID}.err"
 fi
 
-echo ""
 echo "=================================================="
 echo "Completed: $(date)"
-echo "Job ID: ${SLURM_JOB_ID:-local}"
 echo "=================================================="
