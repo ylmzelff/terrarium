@@ -39,14 +39,22 @@ from dotenv import load_dotenv
 SIZES    = [960, 480, 448, 240, 224, 112, 56, 32, 16, 8]
 BASE_CFG = str(PROJECT_ROOT / "examples" / "configs" / "meeting_scheduling.yaml")
 
+KNOWN_MODELS = {
+    "qwen":    "Qwen/Qwen2.5-7B-Instruct",
+    "llama":   "meta-llama/Llama-3.1-8B-Instruct",
+    "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_config(size: int, seed: int) -> dict:
+def build_config(size: int, seed: int, config_path: str = BASE_CFG, model_override: str = "") -> dict:
     """Zero-array benchmark config for a given slot count."""
-    cfg = load_config(BASE_CFG)
+    cfg = load_config(config_path)
+    if model_override:
+        cfg.setdefault("llm", {}).setdefault("huggingface", {})["model"] = model_override
     cfg["environment"]["num_days"]           = 1
     cfg["environment"]["slots_per_day"]      = size
     cfg["environment"]["use_real_calendars"] = False
@@ -223,8 +231,9 @@ async def run_one(config: dict, use_ot: bool) -> dict:
 # Pair runner (OT then Plain, same config)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_pair(size: int, seed: int, run_ot: bool) -> dict:
-    base = build_config(size, seed)
+async def run_pair(size: int, seed: int, run_ot: bool,
+                   config_path: str = BASE_CFG, model_override: str = "") -> dict:
+    base = build_config(size, seed, config_path=config_path, model_override=model_override)
 
     ot_result    = {"status": "skipped", "elapsed": None, "crypto_time": 0.0}
     plain_result = {"status": "skipped", "elapsed": None, "crypto_time": 0.0}
@@ -275,21 +284,34 @@ def _print_result(r: dict) -> None:
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main(sizes: list[int], num_runs: int, run_ot: bool) -> None:
+def main(sizes: list[int], num_runs: int, run_ot: bool,
+         config_path: str = BASE_CFG, model_override: str = "") -> None:
     configure_logging()
     load_dotenv()
     logging.getLogger().setLevel(logging.WARNING)
+
+    # Resolve effective model name for display
+    _cfg_preview = load_config(config_path)
+    hf_block = _cfg_preview.get("llm", {}).get("huggingface", {})
+    effective_model = (
+        model_override
+        or hf_block.get("model")
+        or _cfg_preview.get("llm", {}).get("model")
+        or "unknown"
+    )
 
     print("=" * 80)
     print("SIMULATION BENCHMARK — OT vs PLAIN (zero arrays)")
     print(f"Sizes: {sizes}")
     print(f"Runs per size: {num_runs}  |  OT: {run_ot}")
+    print(f"Model: {effective_model}")
+    print(f"Config: {config_path}")
     print("=" * 80)
 
     # ── Warmup: load the LLM model before benchmark starts ───────────────────
     print("\n[warmup] Loading LLM model (not counted in results)...")
     try:
-        warmup_cfg = build_config(sizes[0], seed=99)
+        warmup_cfg = build_config(sizes[0], seed=99, config_path=config_path, model_override=model_override)
         asyncio.run(run_one(copy.deepcopy(warmup_cfg), use_ot=False))
         print("[warmup] Done.\n")
     except Exception as exc:
@@ -306,7 +328,7 @@ def main(sizes: list[int], num_runs: int, run_ot: bool) -> None:
             seed = 100 + run_idx - 1
             print(f"  run {run_idx}/{num_runs} (seed={seed})")
             try:
-                row = asyncio.run(run_pair(size, seed, run_ot))
+                row = asyncio.run(run_pair(size, seed, run_ot, config_path, model_override))
                 all_rows.append(row)
             except Exception as exc:
                 logging.error("Pair failed size=%d run=%d: %s", size, run_idx, exc)
@@ -384,9 +406,16 @@ def main(sizes: list[int], num_runs: int, run_ot: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OT vs Plain simulation benchmark (zero arrays)")
-    parser.add_argument("--sizes", type=int, nargs="+", default=SIZES)
-    parser.add_argument("--runs",  type=int, default=3)
-    parser.add_argument("--no-ot", action="store_true", help="Plain only")
+    parser.add_argument("--sizes",  type=int, nargs="+", default=SIZES)
+    parser.add_argument("--runs",   type=int, default=3)
+    parser.add_argument("--no-ot",  action="store_true", help="Plain only")
+    parser.add_argument("--config", type=str, default=BASE_CFG,
+                        help="Path to YAML config (default: meeting_scheduling.yaml)")
+    parser.add_argument("--model",  type=str, default="",
+                        help=f"Model shortcut or full HF path. Shortcuts: {list(KNOWN_MODELS.keys())}")
     args = parser.parse_args()
 
-    main(args.sizes, args.runs, run_ot=not args.no_ot)
+    model_override = KNOWN_MODELS.get(args.model, args.model)  # resolve shortcut
+
+    main(args.sizes, args.runs, run_ot=not args.no_ot,
+         config_path=args.config, model_override=model_override)

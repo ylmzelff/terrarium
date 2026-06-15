@@ -1,0 +1,39 @@
+simulation:
+  max_iterations: 1
+  max_planning_rounds: 1
+  max_conversation_steps: 3
+  seed: 42
+  tags:
+    - benchmark-llama
+
+environment:
+  name: MeetingSchedulingEnvironment
+  use_real_calendars: false
+  num_days: 1
+  slots_per_day: 32
+  num_meetings: 1
+  availability_rate: 0.0
+  intersections: 0
+  graph_api:
+    client_id: ""
+    tenant_id: ""
+    timezone: "Turkey Standard Time"
+    token_cache_path: "token_cache.bin"
+    fresh_auth: true
+    agent_emails:
+      AgentA: "elifnr.yilmz@gmail.com"
+      AgentB: "ikinci.kullanici@example.com"
+
+communication_network:
+  topology: complete
+  num_agents: 2
+
+llm:
+  provider: huggingface
+  huggingface:
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    device: "auto"
+    trust_remote_code: false
+    params:
+      temperature: 0.0
+      max_new_tokens: 512

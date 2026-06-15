@@ -22,15 +22,22 @@ export PYTHONUNBUFFERED=1
 SIZES="960 480 448 240 224 112 56 32 16 8"
 RUNS=5
 NO_OT=""
+MODEL=""   # e.g. qwen | llama | mistral | or full HF path
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --sizes) SIZES="$2"; shift 2 ;;
-        --runs)  RUNS="$2";  shift 2 ;;
-        --no-ot) NO_OT="--no-ot"; shift ;;
+        --sizes)  SIZES="$2";  shift 2 ;;
+        --runs)   RUNS="$2";   shift 2 ;;
+        --no-ot)  NO_OT="--no-ot"; shift ;;
+        --model)  MODEL="$2";  shift 2 ;;
         *) echo "Unknown argument: $1"; shift ;;
     esac
 done
+
+MODEL_ARG=""
+if [ -n "$MODEL" ]; then
+    MODEL_ARG="--model $MODEL"
+fi
 
 # ── Build crypto extension ────────────────────────────────────────────────────
 cd crypto
@@ -51,7 +58,8 @@ echo "=================================================="
 python3 tests/run_simulation_benchmark.py \
     --sizes $SIZES \
     --runs  $RUNS \
-    $NO_OT
+    $NO_OT \
+    $MODEL_ARG
 
 # ── Verify results ────────────────────────────────────────────────────────────
 RESULTS_FILE=$(ls -1t tests/results/simulation_benchmark_*.csv 2>/dev/null | head -1)

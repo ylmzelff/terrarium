@@ -51,10 +51,12 @@ communication_network:
   num_agents: 2
 
 llm:
-  provider: huggingface # Runs locally — no API key needed!
-  model: "Qwen/Qwen2.5-7B-Instruct" # Lightweight, tool-calling capable
-  temperature: 0.0
-  max_tokens: 2048
-  device: "auto" # "auto" = GPU if available, else CPU
-  trust_remote_code: true
-  # max_memory: {"0": "6GiB", "cpu": "16GiB"}   # Uncomment for multi-GPU / limited VRAM
+  provider: huggingface
+  huggingface:
+    model: "Qwen/Qwen2.5-7B-Instruct"
+    device: "auto"
+    trust_remote_code: true
+    # max_memory: {"0": "20GiB", "cpu": "32GiB"}   # Uncomment for multi-GPU / limited VRAM
+    params:
+      temperature: 0.0
+      max_new_tokens: 512

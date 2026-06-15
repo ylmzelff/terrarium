@@ -443,16 +443,22 @@ def get_client_instance(llm_config: Dict[str, Any], *, agent_name: Optional[str]
         return client
     elif provider == "huggingface":
         from llm_server.clients.huggingface_client import HuggingFaceClient
-        
+
         hf_cfg = llm_config.get("huggingface") or {}
-        model_name = hf_cfg.get("model", "Qwen/Qwen2.5-1.5B-Instruct")
-        device = hf_cfg.get("device", "auto")
-        trust_remote_code = hf_cfg.get("trust_remote_code", True)
-        
+        model_name = (
+            hf_cfg.get("model")
+            or llm_config.get("model")  # top-level fallback
+            or "Qwen/Qwen2.5-7B-Instruct"
+        )
+        device = hf_cfg.get("device") or llm_config.get("device", "auto")
+        trust_remote_code = hf_cfg.get("trust_remote_code", llm_config.get("trust_remote_code", True))
+        max_memory = hf_cfg.get("max_memory") or llm_config.get("max_memory")
+
         return HuggingFaceClient(
             model_name=model_name,
             device=device,
-            trust_remote_code=trust_remote_code
+            trust_remote_code=trust_remote_code,
+            max_memory=max_memory,
         )
     else:
         raise ValueError(f"Unknown provider: {provider}. Must be one of: openai, anthropic, gemini, together, vllm, huggingface")
@@ -534,7 +540,11 @@ def get_model_name(provider: str, llm_config: Dict[str, Any]) -> str:
     elif provider == "vllm":
         model_name = _get_vllm_model_name(llm_config)
     elif provider == "huggingface":
-        model_name = llm_config.get("huggingface", {}).get("model", "Qwen/Qwen2.5-1.5B-Instruct")
+        model_name = (
+            llm_config.get("huggingface", {}).get("model")
+            or llm_config.get("model")
+            or "Qwen/Qwen2.5-7B-Instruct"
+        )
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
